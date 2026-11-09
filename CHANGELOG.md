@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.3.1
+
+Fixed:
+- **EllesmereUI's player frame**: with EllesmereUI's unit frames, "Attach to player frame" now attaches the bar to EllesmereUI's player frame instead of the game's hidden one. The bar's default spot is just above it, lined up with its left edge (its right edge for a bar growing left), and it moves along when you move the frame in EllesmereUI's unlock mode. A position you saved against the game's player frame starts over at that default spot, since the two frames sit in different places
+
 ## 1.3.0
 
 New:

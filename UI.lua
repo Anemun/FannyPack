@@ -572,7 +572,7 @@ local function CreateBarCard(parent)
             return holder
         end)
     AddRow(card, L["Attach to player frame"],
-        L["The bar moves along when you move the player frame in Edit Mode. Turn this off to pin it to the screen."],
+        L["The bar moves along when you move the player frame, in Edit Mode or EllesmereUI's unlock mode. Turn this off to pin it to the screen."],
         function(p)
             return CreateToggle(p, function() return ns.db.attached end, ns.SetAttached)
         end)

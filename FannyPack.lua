@@ -763,9 +763,11 @@ end
 local function ShowFrameDebug()
     Print(L["Player frame parts (left, right, top, bottom):"])
     local names = { "PlayerFrame", "PlayerFrame.portrait", "PlayerName", "PlayerFrame.healthbar",
-        "PlayerFrame.manabar", "PlayerLevelText", "PetFrame", "PlayerCastingBarFrame", "FannyPackBar" }
+        "PlayerFrame.manabar", "PlayerLevelText", "PetFrame", "PlayerCastingBarFrame",
+        "EllesmereUIUnitFrames_Player", "EllesmereUIUnitFrames_Player.Health", "EllesmereUIUnitFrames_Player.Power",
+        "EllesmereUIUnitFrames_Player.Portrait", "EllesmereUIUnitFrames_Player.Castbar", "FannyPackBar" }
     for _, name in ipairs(names) do
-        local frameName, field = name:match("^(%w+)%.(%w+)$")
+        local frameName, field = name:match("^([%w_]+)%.(%w+)$")
         local region = field and _G[frameName] and _G[frameName][field] or _G[name]
         local left = region and region:GetLeft()
         if not region then

@@ -164,6 +164,68 @@ local function PetFrameBottom(frameTop)
     return petFrameDepth and frameTop - petFrameDepth
 end
 
+-- The player frame the bar attaches to, and which UI it's from: EllesmereUI's
+-- ("eui") while it shows its own player frame instead of the game's, which
+-- it then hides (the game's stays where it was, out of sight), otherwise the
+-- game's ("blizzard").
+local function PlayerFrameToUse()
+    local ellesmere = _G.EllesmereUIUnitFrames_Player
+    if ellesmere and ellesmere.GetTop then return ellesmere, "eui" end
+    return PlayerFrame, "blizzard"
+end
+
+-- The bar's default spot on EllesmereUI's player frame, like DefaultOffset
+-- does it for the game's: above its highest part (health bar, power bar,
+-- portrait), lined up with its left edge, or its right edge for a bar
+-- growing left; below it, and its cast bar if that hangs right under it,
+-- when there's no room above or the bar grows down.
+local function EllesmereOffset(frame)
+    local db = ns.db
+    local size = db.buttonSize
+    local frameLeft, frameTop = ScreenEdge(frame, "Left"), ScreenEdge(frame, "Top")
+    if not (frameLeft and frameTop) then return 0, GAP + size end
+    local scale = Known(frame:GetEffectiveScale()) or 1
+    local barScale = bar:GetEffectiveScale()
+
+    local parts = { frame, frame.Health, frame.Power }
+    if frame.Portrait and frame.Portrait:IsShown() then parts[#parts + 1] = frame.Portrait end
+    local left, right, highest, lowest
+    for _, part in ipairs(parts) do
+        local l, r = ScreenEdge(part, "Left"), ScreenEdge(part, "Right")
+        local t, b = ScreenEdge(part, "Top"), ScreenEdge(part, "Bottom")
+        if l and (not left or l < left) then left = l end
+        if r and (not right or r > right) then right = r end
+        if t and (not highest or t > highest) then highest = t end
+        if b and (not lowest or b < lowest) then lowest = b end
+    end
+
+    local x
+    if db.direction == "LEFT" then
+        x = ((right or frameLeft + 200 * scale) - frameLeft) / barScale - size
+    else
+        x = ((left or frameLeft) - frameLeft) / barScale
+    end
+
+    highest = highest or frameTop
+    local _, vertical = Shape()
+    local height = bar:GetHeight()
+    local screenTop = UIParent:GetTop() * UIParent:GetEffectiveScale()
+    if (vertical == "BOTTOM" or height <= size + 0.5) and highest + (GAP + height) * barScale <= screenTop then
+        return x, (highest - frameTop) / barScale + GAP + size
+    end
+
+    lowest = lowest or frameTop - 60 * scale
+    -- Its cast bar can sit anywhere; it only counts when it hangs right under.
+    local castBar = frame.Castbar
+    if castBar and castBar:IsShown() then
+        local castTop, castBottom = ScreenEdge(castBar, "Top"), ScreenEdge(castBar, "Bottom")
+        if castTop and castBottom and castTop <= lowest + 2 * scale and castTop >= lowest - 40 * scale then
+            lowest = castBottom
+        end
+    end
+    return x, (lowest - frameTop) / barScale - GAP
+end
+
 -- The cast bar, when Edit Mode's "Lock to Player Frame" hangs it under the
 -- player frame.
 local function AttachedCastBar()
@@ -181,6 +243,8 @@ end
 -- frame is at the top of the screen), or for a bar growing down, it goes
 -- below everything that hangs under the frame.
 local function DefaultOffset()
+    local ellesmere, ui = PlayerFrameToUse()
+    if ui == "eui" then return EllesmereOffset(ellesmere) end
     local db = ns.db
     local size = db.buttonSize
     local frameLeft, frameTop = ScreenEdge(PlayerFrame, "Left"), ScreenEdge(PlayerFrame, "Top")
@@ -260,16 +324,18 @@ end
 
 -- The saved position is where the first button is: from the player
 -- frame's top left while the bar is attached to it (so it moves along when
--- the player frame is moved in Edit Mode), otherwise from the screen's
--- bottom left. Without one, the bar is at its default spot.
+-- the player frame is moved in Edit Mode, or EllesmereUI's unlock mode),
+-- otherwise from the screen's bottom left. Without one, or when it was saved
+-- against the other UI's player frame, the bar is at its default spot.
 local function ApplyPosition()
     local saved = ns.db.position
-    if saved and saved.frame == "player" and PlayerFrame then
-        PlaceFirstButton(PlayerFrame, "TOPLEFT", saved.x, saved.y)
+    local frame, ui = PlayerFrameToUse()
+    if saved and saved.frame == "player" and frame and (saved.ui or "blizzard") == ui then
+        PlaceFirstButton(frame, "TOPLEFT", saved.x, saved.y)
     elseif saved and saved.frame == "screen" then
         PlaceFirstButton(UIParent, "BOTTOMLEFT", saved.x, saved.y)
-    elseif PlayerFrame then
-        PlaceFirstButton(PlayerFrame, "TOPLEFT", DefaultOffset())
+    elseif frame then
+        PlaceFirstButton(frame, "TOPLEFT", DefaultOffset())
     else
         PlaceFirstButton(UIParent, "CENTER", 0, -200)
     end
@@ -287,10 +353,11 @@ local function SavePosition()
 
     -- If the player frame's place is secret just now, the bar is saved
     -- against the screen; the next drag attaches it again.
-    local frameLeft, frameTop = ScreenEdge(PlayerFrame, "Left"), ScreenEdge(PlayerFrame, "Top")
+    local frame, ui = PlayerFrameToUse()
+    local frameLeft, frameTop = ScreenEdge(frame, "Left"), ScreenEdge(frame, "Top")
     if ns.db.attached and frameLeft and frameTop then
         local barScale = bar:GetEffectiveScale()
-        ns.db.position = { frame = "player", x = x - frameLeft / barScale, y = y - frameTop / barScale }
+        ns.db.position = { frame = "player", ui = ui, x = x - frameLeft / barScale, y = y - frameTop / barScale }
     else
         ns.db.position = { frame = "screen", x = x, y = y }
     end
@@ -1281,8 +1348,9 @@ events:SetScript("OnEvent", function(_, event)
     elseif event == "CVAR_UPDATE" or event == "UPDATE_BINDINGS" then
         ns.UpdateBar()
     elseif event == "PLAYER_ENTERING_WORLD" then
-        -- The player frame has its final place now; line up with it again.
-        if bar and not ns.db.position then ns.UpdateBar() end
+        -- The player frame has its final place now, and EllesmereUI's exists
+        -- if it replaces the game's: line up with it again.
+        if bar and (not ns.db.position or ns.db.attached) then ns.UpdateBar() end
     elseif event == "UNIT_PET" then
         -- The pet frame is placed now, so its exact spot is known.
         if bar and not ns.db.position then ns.UpdateBar() end
