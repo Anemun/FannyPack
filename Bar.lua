@@ -45,6 +45,7 @@ local countdownFont = CreateFont("FannyPackCountdownFont") -- cooldown numbers, 
 local ROW_HEIGHT = 26 -- rows in the item list
 
 local bar, mover, picker
+local flyout -- the camp gear row (see "The camp gear row")
 local buttons = {} -- [kind key] = button
 local pending = false -- a change to the buttons is waiting for combat to end
 local createAfterCombat = false
@@ -95,9 +96,7 @@ local function Shape()
     return horizontal, vertical, side
 end
 
-local function KindIcon(kind)
-    return select(5, C_Item.GetItemInfoInstant(kind.icon))
-end
+local KindIcon = ns.KindIcon
 
 ------------------------------------------------------------------------
 -- Position
@@ -461,6 +460,65 @@ local function BuffTimeLeft(spellID, englishName)
     return AuraTimeLeft(ns.SpellName(spellID) or englishName)
 end
 
+-- Bleeds have no debuff type in Classic's data, so they're also known by
+-- name: the players' and the commonest monsters' bleeds, and any debuff
+-- with "bleed" in its name. Built when first needed, in the client's language.
+local BLEED_SPELLS = {
+    772, -- Rend
+    12162, -- Deep Wound
+    703, -- Garrote
+    1943, -- Rupture
+    1822, -- Rake
+    1079, -- Rip
+    9005, -- Pounce (its bleed is "Pounce Bleed", caught by the word)
+}
+local bleedNames
+
+local function IsBleed(name, dispel)
+    if dispel == "Bleed" then return true end
+    if not name then return false end
+    if not bleedNames then
+        bleedNames = {}
+        for _, spellID in ipairs(BLEED_SPELLS) do
+            local spellName = ns.SpellName(spellID)
+            if spellName then bleedNames[spellName] = true end
+        end
+    end
+    return bleedNames[name] or name:lower():find(L["bleed"], 1, true) ~= nil
+end
+
+-- Whether you have a debuff of this kind (Poison, Disease or Bleed).
+-- Debuffs the game keeps secret in combat are skipped.
+local function HasDebuff(cure)
+    for i = 1, 40 do
+        local name, dispel
+        if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
+            local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HARMFUL")
+            if not aura then return false end
+            name, dispel = aura.name, aura.dispelName
+        elseif UnitDebuff then
+            local debuffName, _, _, debuffType = UnitDebuff("player", i)
+            if not debuffName then return false end
+            name, dispel = debuffName, debuffType
+        else
+            return false
+        end
+        local secret = issecretvalue and (issecretvalue(name) or issecretvalue(dispel))
+        if not secret then
+            if cure == "Bleed" then
+                if IsBleed(name, dispel) then return true end
+            elseif dispel == cure then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- The glow switch and "running out" setting of each buff button.
+local GLOW_SETTING = { elixir = "elixirGlow", elixir2 = "elixirGlow", scroll = "scrollGlow", otherBuff = "otherBuffGlow" }
+local MINUTES_SETTING = { scroll = "scrollMinutes", otherBuff = "otherBuffMinutes" } -- others: elixirMinutes
+
 -- Gold while a buff is missing, silver in its last few minutes, as set on
 -- the Reminders page for that kind of buff (see ns.RUNNING_OUT).
 local function GlowFor(timeLeft, minutes)
@@ -492,9 +550,18 @@ end
 -- and silver when it's running out: Well Fed on buff food (not while
 -- you're eating), the item's buff on elixirs and scrolls, and stones, oils
 -- and poisons on weapons. Only out of combat, and only when you carry some.
+-- Cures glow gold while you have something they cure, anti-venom in combat
+-- too (poultices and tourniquets can't be used then).
 -- Returns the glow's colour, or nil.
 local function WantsGlow(button, empty)
-    if empty or inCombat or InCombatLockdown() then return nil end
+    if empty then return nil end
+    local fighting = inCombat or InCombatLockdown()
+    local cure = button.kind.cure
+    if cure then
+        if fighting and button.kind.noCombat then return nil end
+        return ns.db.cureGlow and HasDebuff(cure) and GLOW_MISSING or nil
+    end
+    if fighting then return nil end
     local key = button.kind.key
     if key == "buffFood" then
         if not ns.db.buffFoodGlow or BuffTimeLeft(EATING, "Food") then return nil end
@@ -510,11 +577,9 @@ local function WantsGlow(button, empty)
     elseif button.kind.buff then
         -- The buff is named like the item's use effect, e.g. "Elixir of the
         -- Mongoose" or "Stamina" for a Scroll of Stamina.
-        local on = ns.db.elixirGlow
-        if key == "scroll" then on = ns.db.scrollGlow end
-        if not on or not button.itemID then return nil end
+        if not ns.db[GLOW_SETTING[key]] or not button.itemID then return nil end
         local spell = GetItemSpell(button.itemID)
-        local minutes = key == "scroll" and ns.db.scrollMinutes or ns.db.elixirMinutes
+        local minutes = ns.db[MINUTES_SETTING[key] or "elixirMinutes"]
         return spell and GlowFor(AuraTimeLeft(spell), minutes) or nil
     end
     return nil
@@ -522,15 +587,20 @@ end
 
 -- "Hide while on": which reminder each button belongs to.
 local REMINDER_OF = {
-    buffFood = "wellFed", elixir = "elixir", elixir2 = "elixir", scroll = "scroll",
+    buffFood = "wellFed", elixir = "elixir", elixir2 = "elixir", scroll = "scroll", otherBuff = "otherBuff",
     weapon = "weapon", poison = "weapon", poison2 = "weapon",
+    antiVenom = "cure", poultice = "cure", tourniquet = "cure",
 }
 
 -- True while the buff a button is for is on you and not running out yet,
 -- the same moments its reminder glow is off. Weapons: every weapon you hold
 -- has a stone, oil or poison on it (or for a poison button, its own hand).
+-- Cures: you have nothing for them to cure.
 local function BuffIsOn(key, itemID)
-    if key == "buffFood" then
+    local cure = ns.KIND_BY_KEY[key].cure
+    if cure then
+        return not HasDebuff(cure)
+    elseif key == "buffFood" then
         return GlowFor(BuffTimeLeft(WELL_FED, "Well Fed"), ns.db.wellFedMinutes) == nil
     elseif key == "weapon" then
         return (HoldsWeapon(16) or HoldsWeapon(17)) and WeaponGlow(16) == nil and WeaponGlow(17) == nil
@@ -541,7 +611,7 @@ local function BuffIsOn(key, itemID)
     end
     local spell = itemID and GetItemSpell(itemID)
     if not spell then return false end
-    local minutes = key == "scroll" and ns.db.scrollMinutes or ns.db.elixirMinutes
+    local minutes = ns.db[MINUTES_SETTING[key] or "elixirMinutes"]
     return GlowFor(AuraTimeLeft(spell), minutes) == nil
 end
 
@@ -685,6 +755,8 @@ local function UpdateLook(button)
         end
         count = count or 0
     end
+    local flyout = button.kind.flyout
+    if flyout then count = #ns.ListFor(button.kind.key) end -- kinds of camp gear, not shown
     local empty = count == 0
     button.subIcon:SetShown(subIconID ~= nil and not empty)
     if subIconID then
@@ -707,7 +779,7 @@ local function UpdateLook(button)
     button.empty = empty
 
     -- During a cooldown its countdown is the only text, so it stays readable.
-    button.count:SetText(empty and "" or (count > 999 and "*" or count))
+    button.count:SetText((empty or flyout) and "" or (count > 999 and "*" or count))
     local lowStock = ns.LowStock(button.kind.key)
     if ns.db.lowStockWarning and not empty and count <= lowStock then
         button.count:SetTextColor(unpack(LOW_STOCK_COLOR)) -- down to your last few
@@ -722,7 +794,19 @@ end
 
 local function ShowButtonTooltip(self)
     GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
-    if self.kind.combo then
+    if self.kind.flyout then
+        GameTooltip:SetText(self.kind.name, 1, 1, 1)
+        local list = ns.ListFor(self.kind.key)
+        for _, entry in ipairs(list) do
+            GameTooltip:AddDoubleLine(entry.name, entry.count, 1, 0.82, 0, 1, 1, 1)
+        end
+        if #list == 0 then
+            GameTooltip:AddLine(L["None in your bags."], C.muted[1], C.muted[2], C.muted[3])
+        end
+        GameTooltip:AddLine(L["Click to show all of it in a row, then click one to use it."], 0.6, 0.6, 0.6, true)
+        GameTooltip:Show()
+        return
+    elseif self.kind.combo then
         GameTooltip:SetText(self.kind.name, 1, 1, 1)
         for _, partID in ipairs(self.partIDs or {}) do
             local name = C_Item.GetItemInfo(partID)
@@ -741,6 +825,11 @@ local function ShowButtonTooltip(self)
         GameTooltip:SetText(self.kind.name, 1, 1, 1)
         GameTooltip:AddLine(L["None in your bags."], C.muted[1], C.muted[2], C.muted[3])
     end
+    if self.kind.cure then
+        local what = { Poison = L["a poison"], Disease = L["a disease"], Bleed = L["a bleed"] }
+        GameTooltip:AddLine(L["Out of combat, only used while you have %s on you. Shift-click to use it anyway."]
+            :format(what[self.kind.cure]), 0.6, 0.6, 0.6, true)
+    end
     if self.kind.self then
         GameTooltip:AddLine(ns.db.useOnTarget and L["Goes on your friendly target, or on you."]
             or L["Always goes on you."], 0.6, 0.6, 0.6, true)
@@ -756,16 +845,9 @@ local function ShowButtonTooltip(self)
     GameTooltip:Show()
 end
 
-local function CreateItemButton(kind)
-    local button = CreateFrame("Button", ns.ButtonName(kind.key), bar, "SecureActionButtonTemplate")
-    button.kind = kind
-    button.usable = true
-
-    -- Left-click uses the item. Right-click has no secure action, only
-    -- the item list (PostClick). Which half of a click counts is set in
-    -- SecureUpdate.
-    -- What a click does is set in SecureUpdate.
-
+-- The looks every button has, on the bar and in the camp gear row: border,
+-- icon, glow, highlight, cooldown, count and hotkey.
+local function AddButtonParts(button)
     -- Shape and border are set by ApplyStyle.
     button.border = button:CreateTexture(nil, "BACKGROUND")
     button.border:SetAllPoints()
@@ -791,7 +873,6 @@ local function CreateItemButton(kind)
     button.cooldown:SetAllPoints(button.icon)
     button.cooldown:SetDrawBling(false) -- its flash is square, also on round buttons
     if button.cooldown.SetHideCountdownNumbers then button.cooldown:SetHideCountdownNumbers(false) end
-    button.cooldown:SetScript("OnCooldownDone", function() UpdateLook(button) end)
 
     -- The count goes on its own layer so the cooldown swipe doesn't cover it.
     local overlay = CreateFrame("Frame", nil, button)
@@ -807,11 +888,29 @@ local function CreateItemButton(kind)
     button.count:SetPoint("BOTTOMRIGHT", -2, 2)
     button.hotkey = overlay:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmallGray")
     button.hotkey:SetPoint("TOPRIGHT", -1, -1)
+end
 
+local function CreateItemButton(kind)
+    local button = CreateFrame("Button", ns.ButtonName(kind.key), bar, "SecureActionButtonTemplate")
+    button.kind = kind
+    button.usable = true
+
+    -- Left-click uses the item. Right-click has no secure action, only
+    -- the item list (PostClick). What a click does, and which half of it
+    -- counts, is set in SecureUpdate.
+    AddButtonParts(button)
+    button.cooldown:SetScript("OnCooldownDone", function() UpdateLook(button) end)
     ApplyStyle(button)
 
+    -- Camp gear: either click opens its row.
     button:SetScript("PostClick", function(self, mouseButton)
-        if mouseButton == "RightButton" then ns.TogglePicker(self) end
+        if self.kind.flyout then
+            ns.ToggleFlyout(self)
+        elseif mouseButton == "RightButton" then
+            ns.TogglePicker(self)
+        elseif self.locked and not IsShiftKeyDown() and UIErrorsFrame then
+            UIErrorsFrame:AddMessage(L["Nothing to cure. Shift-click to use it anyway."], 1, 0.1, 0.1)
+        end
     end)
     button:SetAttribute("fp-incombat", false)
     button:SetAttribute("fp-outofcombat", false)
@@ -848,7 +947,11 @@ local function SecureUpdate()
         button.itemID = entry and entry.itemID
         button.usable = not entry or entry.usable
         local kind = button.kind
-        if kind.slot then
+        if kind.flyout then
+            -- No item of its own: a click opens the row (PostClick).
+            button.itemID = nil
+            button:SetAttribute("type1", nil)
+        elseif kind.slot then
             -- Stones, oils and poisons need a weapon to go on: use the
             -- item, then pick the weapon's slot.
             local use = entry and "/use item:" .. entry.itemID .. "\n/use "
@@ -881,6 +984,16 @@ local function SecureUpdate()
             button:SetAttribute("unit1", kind.self and "player" or nil) -- on you, even with a friend targeted
             button:SetAttribute("item1", entry and ("item:" .. entry.itemID) or nil)
         end
+        if kind.cure then
+            -- Out of combat a cure is only used while you have something
+            -- for it to cure, so it isn't wasted; Shift-click uses it
+            -- anyway. In a fight the button can't change, so it stays armed.
+            for _, attribute in ipairs({ "type1", "item1", "unit1", "macrotext1" }) do
+                button:SetAttribute("shift-" .. attribute, button:GetAttribute(attribute))
+            end
+            button.locked = entry ~= nil and not inCombat and not HasDebuff(kind.cure)
+            if button.locked then button:SetAttribute("type1", nil) end
+        end
         button:RegisterForClicks(clickHalf)
         button:SetSize(size, size)
 
@@ -888,6 +1001,9 @@ local function SecureUpdate()
         local outOfCombat, inCombatToo = db.buttons[key], ns.ShowsInCombat(key)
         local hidden = entry ~= nil and HiddenWhileOn(key, entry.itemID)
         button.hiddenWhileOn = hidden
+        -- Camp gear: not where you can't camp. Dungeons and raids, and
+        -- cities and inns, which the game only tells apart as "resting".
+        if kind.outdoors and db.campOutdoorsOnly and (IsInInstance() or IsResting()) then hidden = true end
         local show = ns.IsAvailable(key) and (outOfCombat or inCombatToo) and (entry ~= nil or not db.hideEmpty)
             and not hidden or false
         button:SetAttribute("fp-enabled", show)
@@ -939,7 +1055,10 @@ fader:Hide()
 local function FadeTarget()
     if InCombatLockdown() or not ns.account.locked then return 1 end
     if bar:IsMouseOver(8, -8, -8, 8) then return 1 end
-    if (picker and picker:IsShown()) or (FannyPackFrame and FannyPackFrame:IsShown()) then return 1 end
+    if (picker and picker:IsShown()) or (flyout and flyout:IsShown())
+        or (FannyPackFrame and FannyPackFrame:IsShown()) then
+        return 1
+    end
     return 0
 end
 
@@ -965,6 +1084,127 @@ function ns.UpdateFade(instant)
     if instant or not ns.db.fadeOutOfCombat then SetVisibility(1) end
 end
 
+------------------------------------------------------------------------
+-- The camp gear row
+------------------------------------------------------------------------
+
+-- A click on the Camp gear button opens a row beside it with a button for
+-- each camp item in your bags. Its buttons are secure like the bar's, so
+-- the row only opens out of combat, and closes when a fight starts (you
+-- can't camp in one anyway).
+local FLYOUT_PADDING = 4
+
+-- Icon, count and cooldown of a button in the row. Safe in combat.
+local function UpdateSlot(slot)
+    local count = GetItemCount(slot.itemID)
+    slot.icon:SetTexture(select(5, C_Item.GetItemInfoInstant(slot.itemID)))
+    UpdateCooldown(slot)
+    slot.icon:SetDesaturated(count == 0 or slot.coolingDown)
+    slot.count:SetText(count > 1 and count or "")
+    slot.count:SetShown(not slot.coolingDown)
+end
+
+local function UpdateFlyout()
+    if not (flyout and flyout:IsShown()) then return end
+    for _, slot in ipairs(flyout.slots) do
+        if slot:IsShown() then UpdateSlot(slot) end
+    end
+end
+
+local function CreateFlyout()
+    flyout = CreateFrame("Frame", "FannyPackFlyout", UIParent)
+    flyout:SetFrameStrata("DIALOG")
+    flyout:SetClampedToScreen(true)
+    flyout:EnableMouse(true)
+    ns.Rounded(flyout, "BACKGROUND", C.bg)
+    ns.Rounded(flyout, "BORDER", C.windowBorder, "rounded-border")
+    flyout.slots = {}
+    flyout:Hide()
+
+    tinsert(UISpecialFrames, "FannyPackFlyout") -- Escape closes it
+    -- A click anywhere else closes it too.
+    flyout:SetScript("OnShow", function(self)
+        pcall(self.RegisterEvent, self, "GLOBAL_MOUSE_DOWN")
+    end)
+    flyout:SetScript("OnHide", function(self)
+        pcall(self.UnregisterEvent, self, "GLOBAL_MOUSE_DOWN")
+    end)
+    flyout:SetScript("OnEvent", function(self)
+        if InCombatLockdown() then return end
+        if not self:IsMouseOver() and not (self.owner and self.owner:IsMouseOver()) then
+            self:Hide()
+        end
+    end)
+end
+
+local function GetSlot(i)
+    local slot = flyout.slots[i]
+    if slot then return slot end
+    slot = CreateFrame("Button", nil, flyout, "SecureActionButtonTemplate")
+    slot.kind = flyout.owner.kind
+    AddButtonParts(slot)
+    slot.cooldown:SetScript("OnCooldownDone", function() UpdateSlot(slot) end)
+    slot:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetItemByID(self.itemID)
+        GameTooltip:Show()
+    end)
+    slot:SetScript("OnLeave", GameTooltip_Hide)
+    flyout.slots[i] = slot
+    return slot
+end
+
+-- Fills the row with the owner's items and places it: above the button on
+-- a bar that runs sideways, to its right on one that runs up or down.
+-- False if there's nothing to show. Not in combat.
+local function RefreshFlyout()
+    if InCombatLockdown() then return false end
+    local owner = flyout.owner
+    local list = ns.ListFor(owner.kind.key)
+    if #list == 0 then
+        flyout:Hide()
+        return false
+    end
+    local size, spacing = ns.db.buttonSize, ns.db.spacing
+    local clickHalf = ClickHalf()
+    for i, entry in ipairs(list) do
+        local slot = GetSlot(i)
+        slot.itemID = entry.itemID
+        slot:SetAttribute("type1", "item")
+        slot:SetAttribute("item1", "item:" .. entry.itemID)
+        slot:RegisterForClicks(clickHalf)
+        slot:SetSize(size, size)
+        slot:ClearAllPoints()
+        slot:SetPoint("TOPLEFT", FLYOUT_PADDING + (i - 1) * (size + spacing), -FLYOUT_PADDING)
+        ApplyStyle(slot)
+        slot.hotkey:SetText("")
+        UpdateSlot(slot)
+        slot:Show()
+    end
+    for i = #list + 1, #flyout.slots do flyout.slots[i]:Hide() end
+    flyout:SetSize(FLYOUT_PADDING * 2 + #list * (size + spacing) - spacing, FLYOUT_PADDING * 2 + size)
+    flyout:ClearAllPoints()
+    if ns.db.direction == "UP" or ns.db.direction == "DOWN" then
+        flyout:SetPoint("LEFT", owner, "RIGHT", 6, 0)
+    else
+        flyout:SetPoint("BOTTOM", owner, "TOP", 0, 6)
+    end
+    return true
+end
+
+function ns.ToggleFlyout(button)
+    if InCombatLockdown() then return end
+    if not flyout then CreateFlyout() end
+    if flyout:IsShown() and flyout.owner == button then
+        flyout:Hide()
+        return
+    end
+    if picker then picker:Hide() end
+    GameTooltip:Hide()
+    flyout.owner = button
+    if RefreshFlyout() then flyout:Show() end
+end
+
 function ns.UpdateBar()
     if not bar then return end
     SecureUpdate()
@@ -975,6 +1215,10 @@ function ns.UpdateBar()
         UpdateHotkey(button)
     end
     if picker and picker:IsShown() then ns.RefreshPicker() end
+    if flyout and flyout:IsShown() then
+        -- Its button may have just gone, say on walking into an inn.
+        if flyout.owner:IsShown() then RefreshFlyout() elseif not InCombatLockdown() then flyout:Hide() end
+    end
 end
 
 ------------------------------------------------------------------------
@@ -1301,6 +1545,7 @@ events:RegisterEvent("BAG_UPDATE_COOLDOWN")
 events:RegisterEvent("CVAR_UPDATE") -- "Cast action keybinds on key down" changed
 events:RegisterEvent("UPDATE_BINDINGS")
 events:RegisterEvent("PLAYER_ENTERING_WORLD")
+events:RegisterEvent("PLAYER_UPDATE_RESTING") -- into or out of a city or inn, for the Camp gear button
 events:RegisterUnitEvent("UNIT_PET", "player")
 events:RegisterUnitEvent("UNIT_AURA", "player")
 events:RegisterUnitEvent("UNIT_INVENTORY_CHANGED", "player") -- weapons swapped, stones and oils on or off
@@ -1318,6 +1563,19 @@ local function CheckHideWhileOn()
         -- An elixir or scroll button may also switch to one that isn't on you.
         local switched = REMINDER_OF[key] and entry and entry.itemID ~= button.itemID
         if hidden ~= (button.hiddenWhileOn or false) or switched then
+            ns.UpdateBar()
+            return
+        end
+    end
+end
+
+-- Cures are only armed while you have something to cure (see
+-- SecureUpdate): look again when your debuffs change. Not in combat.
+local function CheckCureLocks()
+    if not bar or InCombatLockdown() then return end
+    for _, button in pairs(buttons) do
+        local cure = button.kind.cure
+        if cure and button.itemID and (button.locked or false) == HasDebuff(cure) then
             ns.UpdateBar()
             return
         end
@@ -1349,8 +1607,11 @@ events:SetScript("OnEvent", function(_, event)
         ns.UpdateBar()
     elseif event == "PLAYER_ENTERING_WORLD" then
         -- The player frame has its final place now, and EllesmereUI's exists
-        -- if it replaces the game's: line up with it again.
-        if bar and (not ns.db.position or ns.db.attached) then ns.UpdateBar() end
+        -- if it replaces the game's: line up with it again. Into or out of
+        -- a dungeon, for the Camp gear button, too.
+        if bar then ns.UpdateBar() end
+    elseif event == "PLAYER_UPDATE_RESTING" then
+        if bar then ns.UpdateBar() end
     elseif event == "UNIT_PET" then
         -- The pet frame is placed now, so its exact spot is known.
         if bar and not ns.db.position then ns.UpdateBar() end
@@ -1361,12 +1622,20 @@ events:SetScript("OnEvent", function(_, event)
             for _, button in pairs(buttons) do UpdateLook(button) end -- no reminders in a fight
         end
         if bar then ns.StopMoving() end -- in case combat starts mid-drag
+        if flyout then flyout:Hide() end -- its buttons can't change in a fight
+        -- Arm the cures for the fight while the buttons can still change
+        -- (combat lockdown starts just after this event).
+        local locked = false
+        for _, button in pairs(buttons) do locked = locked or button.locked end
+        if locked and not InCombatLockdown() then SecureUpdate() end
         if picker and picker:IsShown() and not ns.ShowsInCombat(picker.owner.kind.key) then
             picker:Hide() -- its button is about to disappear
         end
     elseif bar then
         -- Cooldowns, Recently Bandaged, and Well Fed and weapon stones for the reminders.
         for _, button in pairs(buttons) do UpdateLook(button) end
+        UpdateFlyout()
+        CheckCureLocks()
         CheckHideWhileOn()
     end
 end)

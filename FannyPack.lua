@@ -18,7 +18,7 @@ local GetItemCount = C_Item.GetItemCount or GetItemCount
 -- in the client's language) and fallback its English name, in case the
 -- spell isn't known. Classic items are plain "Consumable", without a food
 -- or bandage subtype to go by. icon is an item whose icon the button shows
--- when you carry none. eating: food and drink, which hide in combat unless
+-- when you carry none (texture: an icon file to show instead). eating: food and drink, which hide in combat unless
 -- the player turns them on there (see ns.ShowsInCombat).
 -- list: the button shares another button's items (the second elixir takes
 -- the best one the first doesn't use); allowSame: it may use the same one
@@ -29,10 +29,21 @@ local GetItemCount = C_Item.GetItemCount or GetItemCount
 -- changed in the button's right-click list (none: no warning). The order
 -- here is the default order on the bar. buff: glows while the buff from its
 -- item isn't on you. combo: uses the items of these buttons in one press.
+-- cure: the kind of debuff its items cure (Poison, Disease or Bleed); it
+-- glows while you have one. flyout: a click opens a row with all its items
+-- (see Bar.lua) instead of using one. noCombat: off the bar in combat by
+-- default.
 ns.KINDS = {
     { key = "healthstone", name = L["Healthstone"], icon = 5509 }, -- see HEALTHSTONES
     { key = "bandage", name = L["Bandages"], spell = 746, fallback = "First Aid", icon = 1251, self = true,
         lowStock = 5 },
+    -- Forever's First Aid cures, recognised by their names (see Classify).
+    { key = "antiVenom", name = L["Anti-venom"], icon = 6452, self = true, cure = "Poison", lowStock = 2 },
+    -- Poultices and tourniquets can't be used in combat.
+    { key = "poultice", name = L["Poultice"], icon = 2447, self = true, cure = "Disease", noCombat = true,
+        lowStock = 2 },
+    { key = "tourniquet", name = L["Tourniquet"], icon = 2318, self = true, cure = "Bleed", noCombat = true,
+        lowStock = 2 },
     { key = "healthPotion", name = L["Health potion"], spell = 439, fallback = "Healing Potion", icon = 118,
         lowStock = 3 },
     { key = "manaPotion", name = L["Mana potion"], spell = 437, fallback = "Restore Mana", icon = 2455, lowStock = 3 },
@@ -42,6 +53,8 @@ ns.KINDS = {
     { key = "elixir", name = L["Elixir"], icon = 2454, buff = true }, -- elixirs and flasks, see Classify
     { key = "elixir2", name = L["Second elixir"], icon = 5997, list = "elixir", buff = true },
     { key = "scroll", name = L["Scroll"], icon = 1181, self = true, buff = true }, -- see SCROLLS
+    -- Anything else that gives a timed buff, like Rumsey Rum or juju (see Classify).
+    { key = "otherBuff", name = L["Other buffs"], icon = 21151, buff = true, lowStock = 2 },
     { key = "weapon", name = L["Weapon stone or oil"], icon = 2862, slot = 16, shiftSlot = 17 }, -- see WEAPON_ITEMS
     { key = "poison", name = L["Main-hand poison"], icon = 6947, slot = 16, class = "ROGUE", lowStock = 5 }, -- see POISONS
     { key = "poison2", name = L["Off-hand poison"], icon = 2892, slot = 17, class = "ROGUE",
@@ -51,6 +64,10 @@ ns.KINDS = {
     { key = "eatDrink", name = L["Eat & drink"], icon = 117, combo = { "food", "drink" }, eating = true, lowStock = 5 },
     -- food whose tooltip mentions Well Fed
     { key = "buffFood", name = L["Buff food"], icon = 6888, eating = true, lowStock = 2 },
+    -- Forever's camp gear, and other things you set up at a camp (see IsCamp).
+    -- outdoors: hidden where you can't camp (see ns.SetCampOutdoorsOnly).
+    { key = "camp", name = L["Camp gear"], icon = 211527, texture = 135805, flyout = true, noCombat = true,
+        outdoors = true }, -- a campfire
 }
 
 -- Warlock healthstones, Minor to Major, each with its two improved versions
@@ -105,6 +122,11 @@ local POISONS = {
     [10918] = true, [10920] = true, [10921] = true, [10922] = true, -- Wound I-IV
 }
 
+-- The icon a button shows when it has no item of its own.
+function ns.KindIcon(kind)
+    return kind.texture or select(5, C_Item.GetItemInfoInstant(kind.icon))
+end
+
 -- Whether this character gets a button: some are for one class only.
 function ns.IsAvailable(key)
     local class = ns.KIND_BY_KEY[key].class
@@ -150,6 +172,9 @@ local PROFILE_DEFAULTS = {
     weaponGlow = true, -- the weapon stone or oil button glows while a weapon has none on it
     elixirGlow = true, -- the elixir buttons glow while their buff isn't on you
     -- scrollGlow: the same for the scroll button; starts as elixirGlow, which it was part of
+    otherBuffGlow = true, -- the Other buffs button glows while its buff isn't on you
+    cureGlow = true, -- the cure buttons glow while you have a debuff they cure
+    campOutdoorsOnly = true, -- the Camp gear button hides in dungeons, raids, cities and inns
     preferLow = {}, -- [button key] = true: pick the lowest-level item and smallest stack first
     fadeOutOfCombat = false, -- hide the bar out of combat until you hover over it
     useOnTarget = false, -- bandages and scrolls go on a friendly target instead of always on you
@@ -158,7 +183,8 @@ local PROFILE_DEFAULTS = {
     perRow = 12, -- buttons per row before the bar wraps; 12 or more keeps one row
     order = {}, -- button keys from the first button on; filled in from ns.KINDS
     lowStock = {}, -- [button key] = warn at this many or fewer; unset: the kind's default
-    hideWhileOn = {}, -- [reminder: wellFed, elixir, scroll, weapon] = true: its buttons hide while the buff is on
+    hideWhileOn = {}, -- [reminder: wellFed, elixir, scroll, otherBuff, weapon] = true: its buttons hide
+    -- while the buff is on; [cure] = true: the cure buttons hide while you have nothing to cure
     lowStockWarning = true, -- false: no count turns red, whatever the limits
     buttons = {}, -- [button key] = shown out of combat; filled in for the character's class
 }
@@ -167,7 +193,7 @@ local PROFILE_DEFAULTS = {
 --     LEFT or RIGHT for one growing up or down (see ns.RowsToward)
 --   position = { frame = "player" or "screen", x, y } once the bar is
 --     dragged; until then it sits above the player frame
---   wellFedMinutes, elixirMinutes, scrollMinutes, weaponMinutes = how long
+--   wellFedMinutes, elixirMinutes, scrollMinutes, otherBuffMinutes, weaponMinutes = how long
 --     before each runs out its reminder glows silver (0: never); see
 --     ns.RUNNING_OUT
 -- And from 1.1.0, carried into the first profile and then converted (see
@@ -176,7 +202,7 @@ local PROFILE_ONLY = { rowsToward = true, position = true, hideEatingInCombat = 
 
 -- The "running out" settings, each up to how long that kind of buff lasts,
 -- in minutes. Saved as <name>Minutes in the profile.
-ns.RUNNING_OUT = { wellFed = 15, elixir = 60, scroll = 30, weapon = 30 }
+ns.RUNNING_OUT = { wellFed = 15, elixir = 60, scroll = 30, otherBuff = 60, weapon = 30 }
 local DEFAULT_RUNNING_OUT = 2
 
 local DEFAULT_PROFILE = "Default"
@@ -278,6 +304,57 @@ local function TooltipHas(itemID, text, needsUse)
     return found
 end
 
+-- The red lines of an item's tooltip (what keeps you from using it), joined.
+local function RedLines(itemID)
+    if not (C_TooltipInfo and C_TooltipInfo.GetItemByID) then return nil end
+    local data = C_TooltipInfo.GetItemByID(itemID)
+    local red = {}
+    for _, line in ipairs(data and data.lines or {}) do
+        local color = line.leftColor
+        if color and line.leftText and color.r > 0.9 and color.g < 0.3 and color.b < 0.3 then
+            red[#red + 1] = line.leftText
+        end
+    end
+    return #red > 0 and table.concat(red, "; ") or nil
+end
+
+-- The item's "Use:" line, in lower case, or nil if the tooltip (or the
+-- text of its use effect) isn't loaded yet.
+local function UseLine(itemID)
+    local lines = TooltipLines(itemID)
+    if not lines then return nil end
+    local useLabel = (ITEM_SPELL_TRIGGER_ONUSE or "Use:"):lower()
+    for _, line in pairs(lines) do
+        line = line and line:lower()
+        if line and line:find(useLabel, 1, true) == 1 then return line end
+    end
+end
+
+-- Buttons whose items are ranked by how much they heal or restore, read
+-- from the "Use:" line of their tooltips ("Restores 294 health over 21
+-- sec."). Required and item levels don't say it: a low-level food can heal
+-- more than a higher one.
+local RANK_BY_AMOUNT = {
+    food = true, drink = true, bandage = true, healthPotion = true, manaPotion = true, healthstone = true,
+    -- Cures: "cured of poisons up to level 45".
+    antiVenom = true, poultice = true, tourniquet = true,
+}
+local amounts = {} -- [itemID] = the largest number in its "Use:" line (cached once known)
+
+-- How much an item heals or restores, 0 if its "Use:" line has no number,
+-- or nil if the tooltip isn't loaded yet.
+local function Amount(itemID)
+    if amounts[itemID] then return amounts[itemID] end
+    local line = UseLine(itemID)
+    if not line then return nil end
+    -- Thousands separators ("1,344", "1.344") between digits go first.
+    line = line:gsub("(%d)[,.](%d%d%d)", "%1%2")
+    local amount = 0
+    for number in line:gmatch("%d+") do amount = math.max(amount, tonumber(number)) end
+    amounts[itemID] = amount
+    return amount
+end
+
 local itemKinds = {} -- [itemID] = kind key, or false (cached once known)
 local conjured = {}  -- [itemID] = true/false (cached once known)
 local undecided = false -- the last scan met items it couldn't sort yet
@@ -287,6 +364,48 @@ local undecided = false -- the last scan met items it couldn't sort yet
 -- their buttons red after the fight.
 local usableOutOfCombat = {}
 
+-- Camp gear: Forever's campfires and camp objects (a tent, a chair, a
+-- Toxin Study...), which aren't all consumables. Known by "campfire",
+-- "camping" or "camp feature" in the name or the "Use:" line, or a name
+-- starting with "Camp ", and a few by their IDs. Not just "camp": the
+-- Hearthstone "returns you to Camp Taurajo".
+local CAMP_ITEMS = {
+    [211527] = true, -- Cozy Sleeping Bag
+}
+-- Never camp gear, whatever their text says: gear, quest items, and the
+-- recipes that teach camp objects.
+local NOT_CAMP_CLASSES = {
+    [Enum.ItemClass and Enum.ItemClass.Weapon or 2] = true,
+    [Enum.ItemClass and Enum.ItemClass.Armor or 4] = true,
+    [Enum.ItemClass and Enum.ItemClass.Recipe or 9] = true,
+    [Enum.ItemClass and Enum.ItemClass.Questitem or 12] = true,
+}
+
+-- true or false, or nil if the item's text isn't loaded yet.
+local function IsCamp(itemID)
+    if CAMP_ITEMS[itemID] then return true end
+    local name = C_Item.GetItemInfo(itemID)
+    if not name then return nil end
+    name = name:lower()
+    if name:find(L["camp "], 1, true) == 1 then return true end
+    local line = UseLine(itemID)
+    if not line then return nil end
+    if line:find(L["teaches you"], 1, true) then return false end
+    for _, word in ipairs({ L["campfire"], L["camping"], L["camp feature"] }) do
+        if name:find(word, 1, true) or line:find(word, 1, true) then return true end
+    end
+    return false
+end
+
+-- First Aid's cures, by name: Anti-Venom, and Forever's poultices and
+-- tourniquets (filed as trade goods, not consumables).
+local function CureKind(itemID)
+    local name = (C_Item.GetItemInfo(itemID) or ""):lower()
+    return (name:find(L["anti-venom"], 1, true) and "antiVenom")
+        or (name:find(L["poultice"], 1, true) and "poultice")
+        or (name:find(L["tourniquet"], 1, true) and "tourniquet")
+end
+
 -- The kind of button an item belongs on, or nil. Items the game hasn't
 -- loaded yet are requested and get sorted on the next scan.
 local function Classify(itemID)
@@ -295,8 +414,32 @@ local function Classify(itemID)
 
     local classID, subClassID = select(6, C_Item.GetItemInfoInstant(itemID))
     if classID ~= CONSUMABLE then
-        itemKinds[itemID] = false
-        return nil
+        -- Only cures and camp gear get a button among the other items you can use.
+        if not classID or NOT_CAMP_CLASSES[classID] then
+            itemKinds[itemID] = false
+            return nil
+        end
+        if not CAMP_ITEMS[itemID] and not C_Item.IsItemDataCachedByID(itemID) then
+            C_Item.RequestLoadItemDataByID(itemID)
+            undecided = true
+            return nil
+        end
+        if not CAMP_ITEMS[itemID] and not GetItemSpell(itemID) then
+            itemKinds[itemID] = false -- nothing to use
+            return nil
+        end
+        local cure = CureKind(itemID)
+        if cure then
+            itemKinds[itemID] = cure
+            return cure
+        end
+        local camp = IsCamp(itemID)
+        if camp == nil then
+            undecided = true
+            return nil
+        end
+        itemKinds[itemID] = camp and "camp" or false
+        return camp and "camp" or nil
     end
     local listed = (HEALTHSTONES[itemID] and "healthstone") or (WEAPON_ITEMS[itemID] and "weapon")
         or (POISONS[itemID] and "poison") or (SCROLLS[itemID] and "scroll")
@@ -313,6 +456,23 @@ local function Classify(itemID)
     local spell = GetItemSpell(itemID)
     if not spell then return nil end -- no use effect
 
+    -- First Aid's cures go by their names, before their use effects: some
+    -- may share First Aid's with bandages.
+    local name = (C_Item.GetItemInfo(itemID) or ""):lower()
+    local cure = CureKind(itemID)
+    if cure then
+        itemKinds[itemID] = cure
+        return cure
+    end
+    local camp = IsCamp(itemID)
+    if camp == nil then
+        undecided = true
+        return nil
+    elseif camp then
+        itemKinds[itemID] = "camp"
+        return "camp"
+    end
+
     if not kindBySpell then BuildSpellMap() end
     local key = kindBySpell[spell] or false
     if key == false then
@@ -320,7 +480,6 @@ local function Classify(itemID)
         -- The names catch healthstones, stones, oils and poisons newer than
         -- the lists, and elixirs and flasks the game files as plain
         -- consumables. Elixirs go first, for Elixir of Poison Resistance.
-        local name = (C_Item.GetItemInfo(itemID) or ""):lower()
         if name:find(L["healthstone"], 1, true) then
             key = "healthstone"
         elseif ELIXIR_SUBCLASSES[subClassID] or name:find(L["elixir"], 1, true) or name:find(L["flask"], 1, true) then
@@ -348,6 +507,14 @@ local function Classify(itemID)
         end
         if buff then key = "buffFood" end
     end
+    if key == false then
+        -- Anything else whose use effect raises a stat for a while ("Increases
+        -- Stamina by 15 for 15 min."): Rumsey Rum, juju, fishing finds.
+        local line = UseLine(itemID) or "" -- loaded: the Well Fed check needed it
+        if line:find(L["increases"], 1, true) and (line:find(L["%d+ min"]) or line:find(L["%d+ hour"])) then
+            key = "otherBuff"
+        end
+    end
     itemKinds[itemID] = key
     return key or nil
 end
@@ -367,7 +534,8 @@ end
 ------------------------------------------------------------------------
 
 -- [kind key] = list of { itemID, count, name, quality, icon, level,
--- itemLevel, conjured, usable }, best first.
+-- itemLevel, amount, conjured, usable }, best first. amount: how much it
+-- heals or restores, on the RANK_BY_AMOUNT buttons (0 on the others).
 ns.items = {}
 for _, kind in ipairs(ns.KINDS) do
     if not kind.list and not kind.combo then ns.items[kind.key] = {} end
@@ -383,21 +551,34 @@ function ns.ListFor(key)
 end
 
 -- For "use up low-level items first": conjured ones (they vanish anyway),
--- then the lowest level, then the smallest stack.
+-- then the one that restores least, then the lowest level, then the
+-- smallest stack.
 local function Lower(a, b)
     if a.conjured ~= b.conjured then return a.conjured end
+    if a.amount ~= b.amount then return a.amount < b.amount end
     if a.level ~= b.level then return a.level < b.level end
     if a.count ~= b.count then return a.count < b.count end
     return a.itemID < b.itemID
 end
 
--- Best first: items you can use, then the highest required level, then
--- conjured items (they vanish anyway), then the highest item level.
+-- Best first: items you can use, then the one that heals or restores
+-- most, then the highest required level, then conjured items (they vanish
+-- anyway), then the highest item level.
 local function Better(a, b)
     if a.usable ~= b.usable then return a.usable end
+    if a.amount ~= b.amount then return a.amount > b.amount end
     if a.level ~= b.level then return a.level > b.level end
     if a.conjured ~= b.conjured then return a.conjured end
     if a.itemLevel ~= b.itemLevel then return a.itemLevel > b.itemLevel end
+    return a.itemID < b.itemID
+end
+
+-- The camp gear row: campfires first, then by name.
+local function CampFirst(a, b)
+    local aFire = a.name:lower():find(L["campfire"], 1, true) ~= nil
+    local bFire = b.name:lower():find(L["campfire"], 1, true) ~= nil
+    if aFire ~= bFire then return aFire end
+    if a.name ~= b.name then return a.name < b.name end
     return a.itemID < b.itemID
 end
 
@@ -425,7 +606,19 @@ function ns.Scan()
                     usable = usableOutOfCombat[itemID] ~= false
                 else
                     usable = IsUsableItem(itemID) and true or false
+                    -- The game calls some items unusable with nothing in their
+                    -- tooltip to say why, like the old Anti-Venom (Potent
+                    -- Anti-Venom works): only a red requirement counts.
+                    if not usable and C_TooltipInfo and not RedLines(itemID) then usable = true end
                     usableOutOfCombat[itemID] = usable
+                end
+            end
+            local amount = 0
+            if RANK_BY_AMOUNT[key] then
+                amount = Amount(itemID)
+                if not amount then
+                    undecided = true -- ranked by level until its tooltip arrives
+                    amount = 0
                 end
             end
             table.insert(ns.items[key], {
@@ -436,12 +629,13 @@ function ns.Scan()
                 icon = icon,
                 level = minLevel or 0,
                 itemLevel = itemLevel or 0,
+                amount = amount,
                 conjured = IsConjured(itemID),
                 usable = usable,
             })
         end
     end
-    for _, list in pairs(ns.items) do table.sort(list, Better) end
+    for key, list in pairs(ns.items) do table.sort(list, key == "camp" and CampFirst or Better) end
 
     -- Some item text arrives without an event, so look again in a moment.
     if undecided and retries < 10 then
@@ -514,7 +708,7 @@ end
 -- With "Hide while on", these buttons skip items whose buff is already on
 -- you, so they show one you can still use; only with all of them on do they
 -- hide. Two elixirs with one drunk: Elixir shows the other, Second elixir hides.
-local SKIPS_ACTIVE = { elixir = "elixir", elixir2 = "elixir", scroll = "scroll" }
+local SKIPS_ACTIVE = { elixir = "elixir", elixir2 = "elixir", scroll = "scroll", otherBuff = "otherBuff" }
 
 function ns.ItemFor(key)
     local kind = ns.KIND_BY_KEY[key]
@@ -588,7 +782,10 @@ end
 -- default, since you can't eat or drink in a fight.
 function ns.ShowsInCombat(key)
     local shown = db.combat[key]
-    if shown == nil then return not ns.KIND_BY_KEY[key].eating end
+    if shown == nil then
+        local kind = ns.KIND_BY_KEY[key]
+        return not (kind.eating or kind.noCombat)
+    end
     return shown
 end
 
@@ -628,6 +825,21 @@ function ns.SetScrollGlow(value)
     ns.UpdateBar()
 end
 
+function ns.SetOtherBuffGlow(value)
+    db.otherBuffGlow = value and true or false
+    ns.UpdateBar()
+end
+
+function ns.SetCureGlow(value)
+    db.cureGlow = value and true or false
+    ns.UpdateBar()
+end
+
+function ns.SetCampOutdoorsOnly(value)
+    db.campOutdoorsOnly = value and true or false
+    ns.UpdateBar()
+end
+
 function ns.SetPreferLow(key, value)
     db.preferLow[key] = value and true or nil
     ns.UpdateBar()
@@ -660,7 +872,8 @@ function ns.SetLowStock(key, value)
     if ns.RefreshWindow then ns.RefreshWindow() end -- set from the right-click list, it's on a page too
 end
 
--- reminder: wellFed, elixir, scroll or weapon (as in ns.RUNNING_OUT).
+-- reminder: wellFed, elixir, scroll, otherBuff or weapon (as in
+-- ns.RUNNING_OUT), or cure.
 function ns.SetHideWhileOn(reminder, value)
     db.hideWhileOn[reminder] = value and true or nil
     ns.UpdateBar()
@@ -739,29 +952,54 @@ end
 ------------------------------------------------------------------------
 
 -- Lists every consumable in your bags, its use effect and the button it
--- went on, for bug reports.
-local function ShowDebug()
-    Print(L["Consumables in your bags:"])
+-- went on, for bug reports. out(line) adds a line to the report.
+local function ShowDebug(out)
+    out(L["Items you can use in your bags:"])
+    local loading = false
     local seen = {}
     for bag = 0, LAST_BAG do
         for slot = 1, C_Container.GetContainerNumSlots(bag) do
             local info = C_Container.GetContainerItemInfo(bag, slot)
             local itemID = info and info.itemID
-            if itemID and not seen[itemID] and select(6, C_Item.GetItemInfoInstant(itemID)) == CONSUMABLE then
+            local classID, subClassID
+            if itemID then classID, subClassID = select(6, C_Item.GetItemInfoInstant(itemID)) end
+            local spell, spellID
+            if itemID then spell, spellID = GetItemSpell(itemID) end
+            if itemID and not spell and not C_Item.IsItemDataCachedByID(itemID) then
+                C_Item.RequestLoadItemDataByID(itemID) -- its use effect isn't known until it loads
+                loading = true
+            end
+            -- Consumables, and anything else you can use (such as camp gear),
+            -- with its item class, for finding new kinds of items.
+            if itemID and not seen[itemID] and (classID == CONSUMABLE or spell) then
                 seen[itemID] = true
                 local key = Classify(itemID)
-                local spell, spellID = GetItemSpell(itemID)
-                print(("  %s (%d): %s %s -> %s"):format(info.hyperlink or itemID, itemID,
-                    tostring(spell), spellID and ("(" .. spellID .. ")") or "", key or L["no button"]))
+                local amount = key and RANK_BY_AMOUNT[key] and Amount(itemID)
+                local name = C_Item.GetItemInfo(itemID)
+                if not name then
+                    C_Item.RequestLoadItemDataByID(itemID)
+                    loading = true
+                end
+                out(("  %s (%d, %s/%s): %s %s -> %s%s"):format(name or "?", itemID,
+                    tostring(classID), tostring(subClassID),
+                    tostring(spell), spellID and ("(" .. spellID .. ")") or "", key or L["no button"],
+                    amount and (", " .. amount) or ""))
+                if IsUsableItem and not IsUsableItem(itemID) then
+                    out("      can't use: " .. (RedLines(itemID) or "no reason in its tooltip"))
+                end
+                -- What camp gear and unsorted items say they do.
+                local line = (key == "camp" or not key) and UseLine(itemID)
+                if line then out("      " .. line:gsub("%s*\n+%s*", " ")) end
             end
         end
     end
+    return loading
 end
 
 -- Where the player frame's parts are, in screen pixels, for working out
 -- the bar's default spot on clients whose player frame differs.
-local function ShowFrameDebug()
-    Print(L["Player frame parts (left, right, top, bottom):"])
+local function ShowFrameDebug(out)
+    out(L["Player frame parts (left, right, top, bottom):"])
     local names = { "PlayerFrame", "PlayerFrame.portrait", "PlayerName", "PlayerFrame.healthbar",
         "PlayerFrame.manabar", "PlayerLevelText", "PetFrame", "PlayerCastingBarFrame",
         "EllesmereUIUnitFrames_Player", "EllesmereUIUnitFrames_Player.Health", "EllesmereUIUnitFrames_Player.Power",
@@ -771,17 +1009,40 @@ local function ShowFrameDebug()
         local region = field and _G[frameName] and _G[frameName][field] or _G[name]
         local left = region and region:GetLeft()
         if not region then
-            print(("  %s: missing"):format(name))
+            out(("  %s: missing"):format(name))
         elseif issecretvalue and (issecretvalue(left) or issecretvalue(region:GetTop())) then
-            print(("  %s: secret"):format(name)) -- the client hides its place from addons just now
+            out(("  %s: secret"):format(name)) -- the client hides its place from addons just now
         elseif not left then
-            print(("  %s: not placed"):format(name))
+            out(("  %s: not placed"):format(name))
         else
             local scale = region:GetEffectiveScale()
             local function px(value) return math.floor(value * scale + 0.5) end
-            print(("  %s: %d, %d, %d, %d"):format(name, px(left), px(region:GetRight()),
+            out(("  %s: %d, %d, %d, %d"):format(name, px(left), px(region:GetRight()),
                 px(region:GetTop()), px(region:GetBottom())))
         end
+    end
+end
+
+-- The debug report, in a window to copy from. Items the game hasn't
+-- loaded yet show as "?": the report fills in again once they arrive.
+function ns.ShowDebugReport(retry)
+    local lines = {}
+    local function out(line) lines[#lines + 1] = line end
+    local version, build = GetBuildInfo()
+    out(("Fanny Pack %s, game %s (%s), %s"):format(ns.VERSION or "?", tostring(version), tostring(build),
+        GetLocale()))
+    out(("%s level %d, profile %s"):format(select(2, UnitClass("player")) or "?", UnitLevel("player"),
+        ns.GetProfileName()))
+    out("")
+    local loading = ShowDebug(out)
+    out("")
+    ShowFrameDebug(out)
+    ns.ShowCopyWindow(L["Fanny Pack debug report"], table.concat(lines, "\n"),
+        L["Copy this into your bug report: it lists the items in your bags, which button each went on, and where your player frame is."])
+    if loading and (retry or 0) < 3 then
+        C_Timer.After(1, function()
+            if FannyPackCopyWindow and FannyPackCopyWindow:IsShown() then ns.ShowDebugReport((retry or 0) + 1) end
+        end)
     end
 end
 
@@ -792,7 +1053,7 @@ local function ShowHelp()
     print(L["  /fannypack reset - put the bar back above your player frame"])
     print(L["  /fannypack profile [name] - show or switch this character's profile"])
     print(L["  /fannypack minimap - show or hide the minimap button"])
-    print(L["  /fannypack debug - list the consumables in your bags and their buttons"])
+    print(L["  /fannypack debug - a report to copy into bug reports: your items and their buttons"])
 end
 
 SLASH_FANNYPACK1 = "/fannypack"
@@ -811,8 +1072,7 @@ SlashCmdList.FANNYPACK = function(msg)
             Print(L["The bar is back above your player frame."])
         end
     elseif command == "debug" then
-        ShowDebug()
-        ShowFrameDebug()
+        ns.ShowDebugReport()
     elseif command == "profile" then
         if rest == "" then
             Print(L["Profile: %s. Profiles: %s"], ns.GetProfileName(), table.concat(ns.GetProfileNames(), ", "))

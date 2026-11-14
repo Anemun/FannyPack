@@ -1,5 +1,17 @@
 # Changelog
 
+## 1.4.0
+
+New:
+- **Anti-venom**, **Poultice** and **Tourniquet** buttons for Forever's First Aid cures: poisons, diseases and bleeds. Each picks your best one (the highest level it cures) and glows gold while you have something it cures. Anti-venom works and glows in combat too; poultices and tourniquets can't be used in combat, so their buttons are off the bar then by default. Out of combat a cure is only used while you have something for it to cure, so a stray click doesn't waste it; Shift-click uses it anyway. In combat the game doesn't let addons change their buttons, so Anti-venom is always used there. With **Hide while on** (Reminders page, Cures row) they stay off the bar until you need one. Bleeds are known by the debuff's name (Rend, Deep Wound, Garrote and anything with "bleed" in it), since the game doesn't mark them
+- **Other buffs** button: anything else whose use effect raises a stat for a while, like Rumsey Rum Black Label, juju and buff drinks from fishing. It glows while its buff isn't on you, and has its own Reminders row with **Running out** (up to 60 minutes), **Hide while on** and **Glow**
+- **Camp gear** button: click it and a row opens beside it with all the camp gear in your bags (your campfire kit first, then your sleeping bag and camp objects like the Toxin Study), each with its cooldown. Click one to use it. The row opens out of combat only, and the button is off the bar in combat by default. It also hides in dungeons, raids, cities and inns, where you can't camp (**Camp gear only where you can camp** on the Buttons page turns that off)
+- Key bindings for the new buttons, under Fanny Pack in the game's Key Bindings
+- **`/fannypack debug`** now opens a window with the report selected, ready to copy into a bug report with Ctrl+C, instead of printing it in chat. It also lists camp gear and other items you can use, and fills in items the game hadn't loaded yet
+
+Fixed:
+- **Best available food** is now the food that heals the most, read from its tooltip, instead of the one with the highest required level. Before, Tough Jerky could win over Snapvine Watermelon. Drinks (by mana restored), bandages, health and mana potions and healthstones are ranked the same way, and "Use up low-level ones first" uses up the ones that restore least first
+
 ## 1.3.1
 
 Fixed:

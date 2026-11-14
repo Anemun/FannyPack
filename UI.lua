@@ -645,7 +645,7 @@ local function CreateButtonsCard(parent)
         local icon = row:CreateTexture(nil, "ARTWORK")
         icon:SetSize(22, 22)
         icon:SetPoint("LEFT", 8, 0)
-        icon:SetTexture(select(5, C_Item.GetItemInfoInstant(kind.icon)))
+        icon:SetTexture(ns.KindIcon(kind))
         icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
         local toggle = CreateToggle(row, function() return ns.db.buttons[kind.key] end, function(value)
@@ -682,13 +682,18 @@ local function CreateButtonsCard(parent)
             return button
         end)
     AddRow(card, L["Use on your target"],
-        L["Bandages and scrolls go on a friendly target. With no target, or an enemy targeted, they go on you."],
+        L["Bandages, cures and scrolls go on a friendly target. With no target, or an enemy targeted, they go on you."],
         function(p)
             return CreateToggle(p, function() return ns.db.useOnTarget end, ns.SetUseOnTarget)
         end)
     AddRow(card, L["Hide empty buttons"], L["Hide buttons for things you don't carry, instead of fading them."],
         function(p)
             return CreateToggle(p, function() return ns.db.hideEmpty end, ns.SetHideEmpty)
+        end)
+    AddRow(card, L["Camp gear only where you can camp"],
+        L["Hide the Camp gear button in dungeons, raids, cities and inns."],
+        function(p)
+            return CreateToggle(p, function() return ns.db.campOutdoorsOnly end, ns.SetCampOutdoorsOnly)
         end)
 
     -- Fits the card to a width; the intro's height decides where the list starts.
@@ -752,14 +757,17 @@ local REMINDERS = {
     { name = L["Buff food"], icon = 6888, minutes = "wellFed", setting = "buffFoodGlow", set = "SetBuffFoodGlow" },
     { name = L["Elixirs"], icon = 2454, minutes = "elixir", setting = "elixirGlow", set = "SetElixirGlow" },
     { name = L["Scrolls"], icon = 1181, minutes = "scroll", setting = "scrollGlow", set = "SetScrollGlow" },
+    { name = L["Other buffs"], icon = 21151, minutes = "otherBuff", setting = "otherBuffGlow", set = "SetOtherBuffGlow" },
     { name = L["Weapons"], icon = 2862, minutes = "weapon", setting = "weaponGlow", set = "SetWeaponGlow" },
+    -- No "running out" for cures: they're for a debuff you have, not a buff.
+    { name = L["Cures"], icon = 6452, minutes = "cure", setting = "cureGlow", set = "SetCureGlow" },
 }
 
 local function CreateRemindersCard(parent)
     local card = CreateCard(parent, L["Reminders"], CARD_WIDTH)
     local intro = Text(card, 12, C.muted)
     intro:SetPoint("TOPLEFT", 20, -52)
-    intro:SetText(L["Buttons glow gold when their buff, or what's on your weapon, is missing, and silver this many minutes before it runs out (0: no silver). \"Hide while on\" keeps a button off the bar until then."])
+    intro:SetText(L["Buttons glow gold when their buff, or what's on your weapon, is missing, and silver this many minutes before it runs out (0: no silver). \"Hide while on\" keeps a button off the bar until then. Cures glow while you have a poison, disease or bleed they cure, and \"Hide while on\" keeps them off the bar until you do."])
 
     local SLIDER_WIDTH = 120
     local GAP = 24 -- between the two switches, for their headings
@@ -792,18 +800,21 @@ local function CreateRemindersCard(parent)
                 if ns.RefreshWindow then ns.RefreshWindow() end -- dims the slider
             end)
         hide:SetPoint("RIGHT", toggle, "LEFT", -GAP, 0)
-        local slider = CreateSlider(row, 0, ns.RUNNING_OUT[info.minutes],
-            function() return ns.db[info.minutes .. "Minutes"] end,
-            function(value) ns.SetRunningOut(info.minutes, value) end, SLIDER_WIDTH)
-        slider:SetPoint("RIGHT", hide, "LEFT", -16, 0)
-        -- The "running out" time matters for the glow and for hiding.
-        updaters[#updaters + 1] = function()
-            slider:SetAlpha((ns.db[info.setting] or ns.db.hideWhileOn[info.minutes]) and 1 or 0.4)
+        local slider
+        if ns.RUNNING_OUT[info.minutes] then
+            slider = CreateSlider(row, 0, ns.RUNNING_OUT[info.minutes],
+                function() return ns.db[info.minutes .. "Minutes"] end,
+                function(value) ns.SetRunningOut(info.minutes, value) end, SLIDER_WIDTH)
+            slider:SetPoint("RIGHT", hide, "LEFT", -16, 0)
+            -- The "running out" time matters for the glow and for hiding.
+            updaters[#updaters + 1] = function()
+                slider:SetAlpha((ns.db[info.setting] or ns.db.hideWhileOn[info.minutes]) and 1 or 0.4)
+            end
         end
 
         local name = Text(row, 14, C.text)
         name:SetPoint("LEFT", icon, "RIGHT", 10, 0)
-        name:SetPoint("RIGHT", slider, "LEFT", -8, 0)
+        name:SetPoint("RIGHT", slider or hide, "LEFT", -8, 0)
         name:SetWordWrap(false)
         name:SetText(info.name)
         rows[#rows + 1] = row
@@ -903,14 +914,14 @@ local function CreateLowStockCard(parent)
     end
 
     for _, kind in ipairs(ns.KINDS) do
-        if ns.IsAvailable(kind.key) then
+        if ns.IsAvailable(kind.key) and not kind.flyout then -- camp gear has no count
             local row = CreateFrame("Frame", nil, card)
             row:SetHeight(32)
             Rounded(row, "BACKGROUND", C.control)
             local icon = row:CreateTexture(nil, "ARTWORK")
             icon:SetSize(22, 22)
             icon:SetPoint("LEFT", 8, 0)
-            icon:SetTexture(select(5, C_Item.GetItemInfoInstant(kind.icon)))
+            icon:SetTexture(ns.KindIcon(kind))
             icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
             local stepper = CreateStepper(row, function() return ns.LowStock(kind.key) end, function(value)
                 ns.SetLowStock(kind.key, value)
@@ -1427,6 +1438,108 @@ function ns.ToggleWindow(show)
     if not window then CreateWindow() end
     if show == nil then show = not window:IsShown() end
     window:SetShown(show)
+end
+
+------------------------------------------------------------------------
+-- Copy window: text to select and copy, such as the debug report
+------------------------------------------------------------------------
+
+local copyWindow
+
+local function CreateCopyWindow()
+    copyWindow = CreateFrame("Frame", "FannyPackCopyWindow", UIParent, "BackdropTemplate")
+    copyWindow:SetSize(640, 440)
+    copyWindow:SetPoint("CENTER")
+    copyWindow:SetFrameStrata("FULLSCREEN_DIALOG")
+    copyWindow:SetToplevel(true)
+    copyWindow:SetClampedToScreen(true)
+    copyWindow:SetMovable(true)
+    copyWindow:EnableMouse(true)
+    copyWindow:RegisterForDrag("LeftButton")
+    copyWindow:SetScript("OnDragStart", copyWindow.StartMoving)
+    copyWindow:SetScript("OnDragStop", copyWindow.StopMovingOrSizing)
+    copyWindow:SetBackdrop({
+        bgFile = "Interface\\Buttons\\WHITE8x8",
+        edgeFile = "Interface\\Buttons\\WHITE8x8",
+        edgeSize = 1,
+    })
+    copyWindow:SetBackdropColor(unpack(C.bg))
+    copyWindow:SetBackdropBorderColor(unpack(C.windowBorder))
+    tinsert(UISpecialFrames, "FannyPackCopyWindow") -- Escape closes it
+
+    copyWindow.title = Text(copyWindow, 16, C.text)
+    copyWindow.title:SetPoint("TOPLEFT", 20, -18)
+    copyWindow.hint = Text(copyWindow, 12, C.muted)
+    copyWindow.hint:SetPoint("TOPLEFT", copyWindow.title, "BOTTOMLEFT", 0, -6)
+    copyWindow.hint:SetPoint("RIGHT", -56, 0)
+
+    local close = CreateFrame("Button", nil, copyWindow)
+    close:SetSize(32, 32)
+    close:SetPoint("TOPRIGHT", -10, -10)
+    local closeIcon = Icon(close, "icon-close", 18, C.muted)
+    closeIcon:SetPoint("CENTER")
+    close:SetScript("OnEnter", function() SetColor(closeIcon, C.text) end)
+    close:SetScript("OnLeave", function() SetColor(closeIcon, C.muted) end)
+    close:SetScript("OnClick", function() copyWindow:Hide() end)
+
+    -- The text sits in a dark well. The text box is the scroll frame's own
+    -- child with a fixed size (as in Pocket Goblin): a multi-line box
+    -- without a height draws nothing. The mouse wheel scrolls it.
+    local well = CreateFrame("Frame", nil, copyWindow)
+    well:SetPoint("TOPLEFT", 20, -70)
+    well:SetPoint("BOTTOMRIGHT", -20, 64)
+    Rounded(well, "BACKGROUND", C.control)
+    Rounded(well, "BORDER", C.controlBorder, "rounded-border")
+
+    local scroll = CreateFrame("ScrollFrame", nil, well)
+    scroll:SetPoint("TOPLEFT", 12, -10)
+    scroll:SetPoint("BOTTOMRIGHT", -12, 10)
+    scroll:EnableMouseWheel(true)
+    scroll:SetScript("OnMouseWheel", function(self, delta)
+        local range = self:GetVerticalScrollRange()
+        self:SetVerticalScroll(math.max(0, math.min(range, self:GetVerticalScroll() - delta * 40)))
+    end)
+
+    local box = CreateFrame("EditBox", nil, scroll)
+    box:SetMultiLine(true)
+    box:SetMaxLetters(100000)
+    box:SetAutoFocus(false)
+    box:SetWidth(640 - 40 - 24) -- the window minus the well's and the scroll frame's insets
+    box:SetHeight(440 - 70 - 64 - 20)
+    box:SetFontObject(ChatFontNormal)
+    box:SetTextColor(C.text[1], C.text[2], C.text[3])
+    box:SetScript("OnEscapePressed", function() copyWindow:Hide() end)
+    -- Read only: typing puts the text back.
+    box:SetScript("OnTextChanged", function(self, userInput)
+        if userInput then
+            self:SetText(copyWindow.text)
+            self:HighlightText()
+        end
+    end)
+    -- A click in the text selects all of it again.
+    box:SetScript("OnMouseUp", function(self) self:HighlightText() end)
+    scroll:SetScrollChild(box)
+    copyWindow.box = box
+
+    local done = CreateButton(copyWindow, L["Close"], 110)
+    done:SetPoint("BOTTOMRIGHT", -20, 18)
+    done:SetScript("OnClick", function() copyWindow:Hide() end)
+    copyWindow.copied = Text(copyWindow, 12, C.muted)
+    copyWindow.copied:SetPoint("BOTTOMLEFT", 20, 28)
+    copyWindow.copied:SetPoint("RIGHT", done, "LEFT", -12, 0)
+end
+
+-- Opens a window with text selected, ready for Ctrl+C.
+function ns.ShowCopyWindow(title, text, hint)
+    if not copyWindow then CreateCopyWindow() end
+    copyWindow.text = text
+    copyWindow.title:SetText(title)
+    copyWindow.hint:SetText(hint or "")
+    copyWindow.copied:SetText(L["Press Ctrl+C to copy (Cmd+C on a Mac)."])
+    copyWindow:Show()
+    copyWindow.box:SetText(text)
+    copyWindow.box:SetFocus()
+    copyWindow.box:HighlightText()
 end
 
 ------------------------------------------------------------------------

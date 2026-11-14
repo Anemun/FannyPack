@@ -1,9 +1,10 @@
 # Fanny Pack
 
 One small bar on your hip for everything you reach for between and during
-fights: bandages, healthstones, potions, elixirs, scrolls, weapon stones and
-oils, food, drinks and buff food. Plain food and Well Fed food get separate
-buttons, so you never waste a feast just to heal up. Made for **WoW Forever**.
+fights: bandages, First Aid cures, healthstones, potions, elixirs, scrolls,
+buff drinks, weapon stones and oils, food, drinks, buff food and camp gear.
+Plain food and Well Fed food get separate buttons, so you never waste a feast
+just to heal up. Made for **WoW Forever**.
 
 ## Why Fanny Pack
 
@@ -23,6 +24,12 @@ buttons, so you never waste a feast just to heal up. Made for **WoW Forever**.
 - **Healthstone**
 - **Bandages**: bandages you, and shows how long you're *Recently Bandaged*,
   so you know when the next one is ready
+- **Anti-venom**, **Poultice** and **Tourniquet**: First Aid's cures for
+  poisons, diseases and bleeds, best (highest level cured) first. Each glows
+  while you have something it cures. Anti-venom works in combat too;
+  poultices and tourniquets can't be used then, so their buttons are off the
+  bar in combat by default. Out of combat a cure is only used while you have
+  something for it to cure, so it isn't wasted (Shift-click uses it anyway)
 - **Health potion** and **Mana potion**
 - **Rune**: Demonic Rune and Dark Rune, on their own cooldown apart from potions
 - **Mana gem** (mages only): your conjured mana gem, also on its own cooldown,
@@ -34,8 +41,11 @@ buttons, so you never waste a feast just to heal up. Made for **WoW Forever**.
   you
 - **Scroll**: Scrolls of Agility, Intellect, Protection, Spirit, Stamina and
   Strength, used on you
+- **Other buffs**: anything else that raises a stat for a while, like
+  Rumsey Rum Black Label, juju and buff drinks from fishing. It glows while
+  its buff isn't on you
 
-Turn on **Use on your target** to put bandages and scrolls on a friendly
+Turn on **Use on your target** to put bandages, cures and scrolls on a friendly
 target instead; with no target, or an enemy targeted, they still go on you.
 - **Weapon stone or oil**: sharpening stones, weightstones, wizard oils and
   mana oils. Click to put one on your main hand weapon, Shift-click for your
@@ -51,16 +61,23 @@ target instead; with no target, or an enemy targeted, they still go on you.
 - **Buff food**: food that makes you *Well Fed*, kept apart from your
   everyday food. It glows gold while you're not Well Fed, and silver when
   Well Fed is running out
+- **Camp gear**: click it and a row opens with all your camp gear (your
+  sleeping bag, tents, chairs and other camp objects), each with its
+  cooldown; click one to use it. It's off the bar in combat by default, and
+  in dungeons, raids, cities and inns, where you can't camp
 
 Turn on **Hide while on** for a reminder and its buttons stay off the bar
-while the buff is on you, coming back when it's gone or running out.
+while the buff is on you, coming back when it's gone or running out. For the
+cures, it keeps them off the bar until you have a poison, disease or bleed.
 
 The silver glow starts 2 minutes before a buff or weapon stone runs out. On
 the options' Reminders page you can set it separately for Well Fed (up to 15
-minutes), elixirs (60), scrolls (30) and weapons (30), or 0 for none.
+minutes), elixirs (60), scrolls (30), other buffs (60) and weapons (30), or 0
+for none.
 
-Each button uses the best item you carry that you can use: the highest level
-first, and conjured food and water before anything you'd keep. It shows how
+Each button uses the best item you carry that you can use: the food, drink,
+bandage or potion that restores the most, otherwise the highest level, and
+conjured food and water before anything you'd keep. It shows how
 many you have left and its cooldown. **Right-click** a button to pick a
 different item from your bags, to use up low-level items first instead, and to choose when its count turns **red** as
 you run low (5 bandages, 3 potions and so on, by default). All the low-stock
@@ -79,7 +96,7 @@ Warriors and rogues don't get the drink and mana potion buttons by default.
   food hide during a fight by default, since you can't eat or drink then; a
   button can also show only in fights. The bar closes up around whatever is
   hidden, and switches back when the fight is over
-- The reminder glows wait until the fight is over
+- The reminder glows wait until the fight is over, except the anti-venom's
 - If your bags change mid-fight, the bar catches up as soon as combat ends
   (the game doesn't let addons change their buttons during combat)
 
@@ -132,14 +149,15 @@ Profiles), and the window can be resized to fit small screens.
 | `/fannypack reset` | Put the bar back above your player frame |
 | `/fannypack profile [name]` | Show or switch this character's profile |
 | `/fannypack minimap` | Show or hide the minimap button |
-| `/fannypack debug` | List the consumables in your bags and which button each one is on |
+| `/fannypack debug` | A report to copy into bug reports: the items in your bags and which button each one is on |
 
 ## Reporting bugs
 
 Open an issue on GitHub. Please include what you did and what happened, the
 Fanny Pack version (shown next to the title in the options, `/fannypack`)
 and any error message you got. If an item is on the wrong button, or on
-none, include the text from `/fannypack debug`.
+none, type `/fannypack debug`, press Ctrl+C in the window that opens (the
+text is already selected) and paste it into your report.
 
 ## About me
 
