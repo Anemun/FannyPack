@@ -395,11 +395,28 @@ end
 -- Buttons
 ------------------------------------------------------------------------
 
--- The Recently Bandaged debuff on you: its duration and when it ends.
+-- Forever's client keeps your auras secret in combat, and asking for them
+-- then is an error ("Auras cannot be accessed when secret"). Every aura
+-- lookup goes through this: the answer, or ok = false if it was refused.
+local function AskAura(lookup, ...)
+    local ok, aura = pcall(lookup, ...)
+    if not ok then return false end
+    return true, aura
+end
+
+-- Whether a value from an aura can be used (not a secret one).
+local function Readable(value)
+    return not (issecretvalue and issecretvalue(value))
+end
+
+-- The Recently Bandaged debuff on you: its duration and when it ends (nil
+-- if you don't have it, or the game won't say).
 local function RecentlyBandaged()
     if C_UnitAuras and C_UnitAuras.GetPlayerAuraBySpellID then
-        local aura = C_UnitAuras.GetPlayerAuraBySpellID(RECENTLY_BANDAGED)
-        if aura then return aura.duration, aura.expirationTime end
+        local ok, aura = AskAura(C_UnitAuras.GetPlayerAuraBySpellID, RECENTLY_BANDAGED)
+        if ok and aura and Readable(aura.duration) and Readable(aura.expirationTime) then
+            return aura.duration, aura.expirationTime
+        end
         return nil
     end
     if AuraUtil and AuraUtil.FindAuraByName then
@@ -437,14 +454,16 @@ local function UpdateCooldown(button)
     end
 end
 
--- Seconds left on a buff you have (math.huge if it doesn't run out), or
--- nil if you don't have it.
+-- Seconds left on a buff you have (math.huge if it doesn't run out, or if
+-- the game won't say), or nil if you don't have it.
 local function AuraTimeLeft(name)
     local expiration
     if C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName then
-        local aura = C_UnitAuras.GetAuraDataBySpellName("player", name, "HELPFUL")
+        local ok, aura = AskAura(C_UnitAuras.GetAuraDataBySpellName, "player", name, "HELPFUL")
+        if not ok then return math.huge end -- secret: no reminder rather than a wrong one
         if not aura then return nil end
         expiration = aura.expirationTime
+        if not Readable(expiration) then return math.huge end
     elseif AuraUtil and AuraUtil.FindAuraByName then
         local found, _, _, _, _, auraExpiration = AuraUtil.FindAuraByName(name, "player", "HELPFUL")
         if not found then return nil end
@@ -487,13 +506,16 @@ local function IsBleed(name, dispel)
     return bleedNames[name] or name:lower():find(L["bleed"], 1, true) ~= nil
 end
 
--- Whether you have a debuff of this kind (Poison, Disease or Bleed).
--- Debuffs the game keeps secret in combat are skipped.
+-- Whether you have a debuff of this kind (Poison, Disease or Bleed): true
+-- or false, or nil when the game won't say (your auras are secret in
+-- combat). Single debuffs it keeps secret are skipped.
 local function HasDebuff(cure)
+    if inCombat or InCombatLockdown() then return nil end
     for i = 1, 40 do
         local name, dispel
         if C_UnitAuras and C_UnitAuras.GetAuraDataByIndex then
-            local aura = C_UnitAuras.GetAuraDataByIndex("player", i, "HARMFUL")
+            local ok, aura = AskAura(C_UnitAuras.GetAuraDataByIndex, "player", i, "HARMFUL")
+            if not ok then return nil end
             if not aura then return false end
             name, dispel = aura.name, aura.dispelName
         elseif UnitDebuff then
@@ -503,8 +525,7 @@ local function HasDebuff(cure)
         else
             return false
         end
-        local secret = issecretvalue and (issecretvalue(name) or issecretvalue(dispel))
-        if not secret then
+        if Readable(name) and Readable(dispel) then
             if cure == "Bleed" then
                 if IsBleed(name, dispel) then return true end
             elseif dispel == cure then
@@ -550,18 +571,16 @@ end
 -- and silver when it's running out: Well Fed on buff food (not while
 -- you're eating), the item's buff on elixirs and scrolls, and stones, oils
 -- and poisons on weapons. Only out of combat, and only when you carry some.
--- Cures glow gold while you have something they cure, anti-venom in combat
--- too (poultices and tourniquets can't be used then).
+-- Cures glow gold while you have something they cure, out of combat only:
+-- the game keeps your debuffs secret in a fight (see HasDebuff).
 -- Returns the glow's colour, or nil.
 local function WantsGlow(button, empty)
     if empty then return nil end
-    local fighting = inCombat or InCombatLockdown()
+    if inCombat or InCombatLockdown() then return nil end
     local cure = button.kind.cure
     if cure then
-        if fighting and button.kind.noCombat then return nil end
         return ns.db.cureGlow and HasDebuff(cure) and GLOW_MISSING or nil
     end
-    if fighting then return nil end
     local key = button.kind.key
     if key == "buffFood" then
         if not ns.db.buffFoodGlow or BuffTimeLeft(EATING, "Food") then return nil end
@@ -599,7 +618,7 @@ local REMINDER_OF = {
 local function BuffIsOn(key, itemID)
     local cure = ns.KIND_BY_KEY[key].cure
     if cure then
-        return not HasDebuff(cure)
+        return HasDebuff(cure) == false -- unknown: keep the button on the bar
     elseif key == "buffFood" then
         return GlowFor(BuffTimeLeft(WELL_FED, "Well Fed"), ns.db.wellFedMinutes) == nil
     elseif key == "weapon" then
@@ -991,7 +1010,7 @@ local function SecureUpdate()
             for _, attribute in ipairs({ "type1", "item1", "unit1", "macrotext1" }) do
                 button:SetAttribute("shift-" .. attribute, button:GetAttribute(attribute))
             end
-            button.locked = entry ~= nil and not inCombat and not HasDebuff(kind.cure)
+            button.locked = entry ~= nil and not inCombat and HasDebuff(kind.cure) == false
             if button.locked then button:SetAttribute("type1", nil) end
         end
         button:RegisterForClicks(clickHalf)
@@ -1575,7 +1594,8 @@ local function CheckCureLocks()
     if not bar or InCombatLockdown() then return end
     for _, button in pairs(buttons) do
         local cure = button.kind.cure
-        if cure and button.itemID and (button.locked or false) == HasDebuff(cure) then
+        local has = cure and button.itemID and HasDebuff(cure)
+        if has ~= nil and (button.locked or false) == has then
             ns.UpdateBar()
             return
         end

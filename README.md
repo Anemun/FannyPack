@@ -25,8 +25,9 @@ just to heal up. Made for **WoW Forever**.
 - **Bandages**: bandages you, and shows how long you're *Recently Bandaged*,
   so you know when the next one is ready
 - **Anti-venom**, **Poultice** and **Tourniquet**: First Aid's cures for
-  poisons, diseases and bleeds, best (highest level cured) first. Each glows
-  while you have something it cures. Anti-venom works in combat too;
+  poisons, diseases and bleeds, best (highest level cured) first. Out of
+  combat each glows while you have something it cures. Anti-venom works in
+  combat too;
   poultices and tourniquets can't be used then, so their buttons are off the
   bar in combat by default. Out of combat a cure is only used while you have
   something for it to cure, so it isn't wasted (Shift-click uses it anyway)
@@ -96,7 +97,8 @@ Warriors and rogues don't get the drink and mana potion buttons by default.
   food hide during a fight by default, since you can't eat or drink then; a
   button can also show only in fights. The bar closes up around whatever is
   hidden, and switches back when the fight is over
-- The reminder glows wait until the fight is over, except the anti-venom's
+- The reminder glows wait until the fight is over (the game keeps your buffs
+  and debuffs hidden from addons during a fight)
 - If your bags change mid-fight, the bar catches up as soon as combat ends
   (the game doesn't let addons change their buttons during combat)
 

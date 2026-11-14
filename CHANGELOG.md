@@ -1,5 +1,10 @@
 # Changelog
 
+## 1.4.1
+
+Fixed:
+- **"Auras cannot be accessed when secret" errors** in combat with an Anti-venom button on the bar. WoW Forever keeps your buffs and debuffs hidden from addons during a fight, so the cure glows now wait until the fight is over, like the other reminders. Every other buff and debuff check (Recently Bandaged, the reminders) is protected the same way
+
 ## 1.4.0
 
 New:
