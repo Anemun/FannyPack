@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.4.2
+
+Fixed:
+- **Buff reminders** (buff food, elixirs, scrolls, other buffs) look through all your buffs when the game's lookup by name doesn't find the buff, so a buff you have doesn't keep its button glowing
+
+Changed:
+- **`/fannypack debug`** now also lists your buffs as the game gives them to addons, and what each buff reminder looks for and finds, to help with reports about glows
+
 ## 1.4.1
 
 Fixed:

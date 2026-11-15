@@ -456,10 +456,27 @@ end
 
 -- Seconds left on a buff you have (math.huge if it doesn't run out, or if
 -- the game won't say), or nil if you don't have it.
+-- Your buff called name, looking through all your buffs: for when the
+-- lookup by name finds nothing. true and the aura, or false if the game
+-- won't say.
+local function FindBuffByName(name)
+    local wanted = name:lower()
+    for i = 1, 40 do
+        local ok, aura = AskAura(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
+        if not ok then return false end
+        if not aura then return true, nil end
+        if Readable(aura.name) and aura.name:lower() == wanted then return true, aura end
+    end
+    return true, nil
+end
+
 local function AuraTimeLeft(name)
     local expiration
     if C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName then
         local ok, aura = AskAura(C_UnitAuras.GetAuraDataBySpellName, "player", name, "HELPFUL")
+        if ok and not aura and C_UnitAuras.GetAuraDataByIndex then
+            ok, aura = FindBuffByName(name)
+        end
         if not ok then return math.huge end -- secret: no reminder rather than a wrong one
         if not aura then return nil end
         expiration = aura.expirationTime
@@ -477,6 +494,47 @@ end
 
 local function BuffTimeLeft(spellID, englishName)
     return AuraTimeLeft(ns.SpellName(spellID) or englishName)
+end
+
+-- For the debug report: your buffs as the game gives them to addons, and
+-- what the buff reminders make of them. out(line) adds a line.
+function ns.AuraDebug(out)
+    out("Buffs on you (name, spell ID, minutes left):")
+    if not (C_UnitAuras and C_UnitAuras.GetAuraDataByIndex) then
+        out("  no C_UnitAuras.GetAuraDataByIndex")
+    end
+    for i = 1, 40 do
+        if not (C_UnitAuras and C_UnitAuras.GetAuraDataByIndex) then break end
+        local ok, aura = AskAura(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
+        if not ok then
+            out("  (the game keeps your buffs secret right now)")
+            break
+        end
+        if not aura then break end
+        local left = "?"
+        if Readable(aura.expirationTime) and aura.expirationTime then
+            left = aura.expirationTime == 0 and "-" or ("%.1f"):format((aura.expirationTime - GetTime()) / 60)
+        end
+        out(("  %s (%s): %s"):format(Readable(aura.name) and tostring(aura.name) or "secret",
+            Readable(aura.spellId) and tostring(aura.spellId) or "secret", left))
+    end
+    local function Check(label, name)
+        local byName = "no lookup by name"
+        if C_UnitAuras and C_UnitAuras.GetAuraDataBySpellName then
+            local ok, aura = AskAura(C_UnitAuras.GetAuraDataBySpellName, "player", name, "HELPFUL")
+            byName = not ok and "refused" or (aura and "found" or "not found")
+        end
+        local left = AuraTimeLeft(name)
+        out(("  %s looks for \"%s\": by name %s; time left %s"):format(label, name, byName,
+            left == nil and "none (glows gold)" or left == math.huge and "unknown" or ("%.1f min"):format(left / 60)))
+    end
+    out("What the reminders see:")
+    Check("Buff food", ns.SpellName(WELL_FED) or "Well Fed")
+    for _, key in ipairs({ "elixir", "scroll", "otherBuff" }) do
+        local button = buttons[key]
+        local spell = button and button.itemID and GetItemSpell(button.itemID)
+        if spell then Check(button.kind.name, spell) end
+    end
 end
 
 -- Bleeds have no debuff type in Classic's data, so they're also known by

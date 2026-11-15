@@ -1036,6 +1036,10 @@ function ns.ShowDebugReport(retry)
     out("")
     local loading = ShowDebug(out)
     out("")
+    if ns.AuraDebug then
+        ns.AuraDebug(out)
+        out("")
+    end
     ShowFrameDebug(out)
     ns.ShowCopyWindow(L["Fanny Pack debug report"], table.concat(lines, "\n"),
         L["Copy this into your bug report: it lists the items in your bags, which button each went on, and where your player frame is."])
