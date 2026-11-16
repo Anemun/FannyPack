@@ -751,6 +751,85 @@ local function CreateLookCard(parent)
     return card
 end
 
+-- The items hidden from the buttons (ns.SetHidden), each with the button it
+-- would go on and a Show button. Rows are reused as the list changes.
+local function CreateHiddenCard(parent)
+    local card = CreateCard(parent, L["Hidden items"], CARD_WIDTH)
+    local intro = Text(card, 12, C.muted)
+    intro:SetPoint("TOPLEFT", 20, -52)
+    intro:SetText(L["Items no button uses. Hide one with the x next to it in a button's right-click list, and show it again here or under Hidden in that list."])
+    local empty = Text(card, 13, C.muted)
+    empty:SetText(L["Nothing hidden."])
+
+    local rows, shown = {}, 0
+    local function GetHiddenRow(i)
+        if rows[i] then return rows[i] end
+        local row = CreateFrame("Frame", nil, card)
+        row:SetHeight(32)
+        Rounded(row, "BACKGROUND", C.control)
+        row.icon = row:CreateTexture(nil, "ARTWORK")
+        row.icon:SetSize(22, 22)
+        row.icon:SetPoint("LEFT", 8, 0)
+        row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        row.show = CreateButton(row, L["Show"], 70)
+        row.show:SetHeight(24)
+        row.show:SetPoint("RIGHT", -4, 0)
+        row.show:SetScript("OnClick", function() ns.SetHidden(row.itemID, false) end)
+        row.button = Text(row, 12, C.muted)
+        row.button:SetPoint("RIGHT", row.show, "LEFT", -10, 0)
+        row.button:SetJustifyH("RIGHT")
+        row.name = Text(row, 14, C.text)
+        row.name:SetPoint("LEFT", row.icon, "RIGHT", 10, 0)
+        row.name:SetPoint("RIGHT", row.button, "LEFT", -8, 0)
+        row.name:SetWordWrap(false)
+        rows[i] = row
+        return row
+    end
+
+    local function Fill()
+        local items = {}
+        for itemID in pairs(ns.db.hidden) do
+            local name, _, quality = C_Item.GetItemInfo(itemID)
+            if not name then C_Item.RequestLoadItemDataByID(itemID) end -- named on the next refresh
+            local key = ns.KindOf(itemID)
+            items[#items + 1] = { itemID = itemID, name = name or ("#" .. itemID), quality = quality,
+                button = key and ns.KIND_BY_KEY[key] and ns.KIND_BY_KEY[key].name or "" }
+        end
+        table.sort(items, function(a, b) return a.name < b.name end)
+        for i, item in ipairs(items) do
+            local row = GetHiddenRow(i)
+            row.itemID = item.itemID
+            row.icon:SetTexture(select(5, C_Item.GetItemInfoInstant(item.itemID)))
+            local color = item.quality and ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[item.quality]
+            row.name:SetText(color and color.hex and (color.hex .. item.name .. "|r") or item.name)
+            row.button:SetText(item.button)
+            row:Show()
+        end
+        for i = #items + 1, #rows do rows[i]:Hide() end
+        shown = #items
+        empty:SetShown(shown == 0)
+    end
+    updaters[#updaters + 1] = Fill
+
+    function card:Relayout(width)
+        self:SetWidth(width)
+        intro:SetWidth(width - 40)
+        local top = -52 - intro:GetStringHeight() - 14
+        empty:ClearAllPoints()
+        empty:SetPoint("TOPLEFT", 20, top)
+        for i = 1, shown do
+            rows[i]:SetWidth(width - 40)
+            rows[i]:ClearAllPoints()
+            rows[i]:SetPoint("TOPLEFT", 20, top - (i - 1) * 36)
+        end
+        local listHeight = shown > 0 and shown * 36 - 4 or empty:GetStringHeight()
+        self:SetHeight(-top + listHeight + 20)
+    end
+    Fill()
+    card:Relayout(CARD_WIDTH)
+    return card
+end
+
 -- The reminder glows as a small table: one row per reminder with its
 -- "running out" slider and its on/off switch, under column headings.
 local REMINDERS = {
@@ -1243,7 +1322,7 @@ end
 -- The sidebar's pages and the cards on each.
 local PAGES = {
     { key = "buttons", title = L["Buttons"], subtitle = L["Order, hotkeys & hiding"], icon = "icon-list",
-        cards = { CreateButtonsCard } },
+        cards = { CreateButtonsCard, CreateHiddenCard } },
     { key = "bar", title = L["Bar"], subtitle = L["Position & layout"], icon = "icon-sort",
         cards = { CreateBarCard } },
     { key = "look", title = L["Look"], subtitle = L["Shape, size & fading"], icon = "icon-look",
@@ -1430,6 +1509,7 @@ end
 function ns.RefreshWindow()
     if not (window and window:IsShown()) then return end
     for _, update in ipairs(updaters) do update() end
+    LayoutPage(currentPage) -- a card may have grown or shrunk (Hidden items)
 end
 
 -- show: true/false, or nil to toggle.

@@ -1,5 +1,13 @@
 # Changelog
 
+## 1.5.0
+
+New:
+- **Hide items** from the buttons: each item in a button's right-click list has a small **x** that hides it, so no button uses it, not even when your pick runs out. Handy for a flask you're saving for a raid, a drink you don't want on Other buffs, or camp gear you carry for someone else. Hidden items are listed under **Hidden** at the bottom of the right-click list (click one to show it again) and in a new **Hidden items** card on the Buttons page. They're saved per profile
+
+Changed:
+- **Camp gear**: a right-click now opens its list (to hide items), and a click still opens the row
+
 ## 1.4.2
 
 Fixed:

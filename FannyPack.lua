@@ -186,6 +186,7 @@ local PROFILE_DEFAULTS = {
     hideWhileOn = {}, -- [reminder: wellFed, elixir, scroll, otherBuff, weapon] = true: its buttons hide
     -- while the buff is on; [cure] = true: the cure buttons hide while you have nothing to cure
     lowStockWarning = true, -- false: no count turns red, whatever the limits
+    hidden = {}, -- [itemID] = true: no button uses it (see ns.SetHidden)
     buttons = {}, -- [button key] = shown out of combat; filled in for the character's class
 }
 -- Also part of a profile, but unset by default:
@@ -537,8 +538,14 @@ end
 -- itemLevel, amount, conjured, usable }, best first. amount: how much it
 -- heals or restores, on the RANK_BY_AMOUNT buttons (0 on the others).
 ns.items = {}
+-- [kind key] = the same for items you've hidden: no button uses them, and
+-- they're listed under Hidden in the right-click list.
+ns.hiddenItems = {}
 for _, kind in ipairs(ns.KINDS) do
-    if not kind.list and not kind.combo then ns.items[kind.key] = {} end
+    if not kind.list and not kind.combo then
+        ns.items[kind.key] = {}
+        ns.hiddenItems[kind.key] = {}
+    end
 end
 
 -- The items a button picks from: its own, or the button's it shares.
@@ -548,6 +555,13 @@ function ns.ListFor(key)
     local kind = ns.KIND_BY_KEY[key]
     if kind.combo then return NO_ITEMS end
     return ns.items[kind.list or key]
+end
+
+-- The hidden items a button would otherwise pick from.
+function ns.HiddenFor(key)
+    local kind = ns.KIND_BY_KEY[key]
+    if kind.combo then return NO_ITEMS end
+    return ns.hiddenItems[kind.list or key]
 end
 
 -- For "use up low-level items first": conjured ones (they vanish anyway),
@@ -596,6 +610,7 @@ function ns.Scan()
     end
 
     for _, list in pairs(ns.items) do wipe(list) end
+    for _, list in pairs(ns.hiddenItems) do wipe(list) end
     local playerLevel = UnitLevel("player")
     for itemID, key in pairs(found) do
         local name, _, quality, itemLevel, minLevel, _, _, _, _, icon = C_Item.GetItemInfo(itemID)
@@ -621,7 +636,8 @@ function ns.Scan()
                     amount = 0
                 end
             end
-            table.insert(ns.items[key], {
+            local lists = db and db.hidden[itemID] and ns.hiddenItems or ns.items
+            table.insert(lists[key], {
                 itemID = itemID,
                 count = GetItemCount(itemID),
                 name = name,
@@ -636,6 +652,9 @@ function ns.Scan()
         end
     end
     for key, list in pairs(ns.items) do table.sort(list, key == "camp" and CampFirst or Better) end
+    for _, list in pairs(ns.hiddenItems) do
+        table.sort(list, function(a, b) return a.name < b.name end)
+    end
 
     -- Some item text arrives without an event, so look again in a moment.
     if undecided and retries < 10 then
@@ -838,6 +857,21 @@ end
 function ns.SetCampOutdoorsOnly(value)
     db.campOutdoorsOnly = value and true or false
     ns.UpdateBar()
+end
+
+-- Hides an item from every button (hidden = true), or brings it back.
+function ns.SetHidden(itemID, hidden)
+    db.hidden[itemID] = hidden and true or nil
+    ns.Scan()
+    ns.UpdateBar()
+    if ns.RefreshMinimapButton then ns.RefreshMinimapButton() end
+    if ns.RefreshWindow then ns.RefreshWindow() end
+end
+
+-- The button key an item belongs on, or nil (for the options' list of
+-- hidden items, which may not be in your bags).
+function ns.KindOf(itemID)
+    return Classify(itemID)
 end
 
 function ns.SetPreferLow(key, value)

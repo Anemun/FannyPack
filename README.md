@@ -64,7 +64,8 @@ target instead; with no target, or an enemy targeted, they still go on you.
   Well Fed is running out
 - **Camp gear**: click it and a row opens with all your camp gear (your
   sleeping bag, tents, chairs and other camp objects), each with its
-  cooldown; click one to use it. It's off the bar in combat by default, and
+  cooldown; click one to use it. Right-click it to hide camp gear you don't
+  want in the row. It's off the bar in combat by default, and
   in dungeons, raids, cities and inns, where you can't camp
 
 Turn on **Hide while on** for a reminder and its buttons stay off the bar
@@ -84,6 +85,12 @@ different item from your bags, to use up low-level items first instead, and to c
 you run low (5 bandages, 3 potions and so on, by default). All the low-stock
 limits are also listed together on the options' Reminders page, where you
 can turn the warning off altogether.
+
+**Hide items** you don't want on any button, like a flask you're saving
+for a raid: click the small **x** next to it in a button's right-click
+list. No button uses it from then on. Hidden items are listed under
+**Hidden** at the bottom of that list and on the options' Buttons page,
+where you can show them again.
 
 Buttons for things you don't carry are hidden (or faded, if you prefer).
 Warriors and rogues don't get the drink and mana potion buttons by default.

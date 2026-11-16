@@ -880,7 +880,8 @@ local function ShowButtonTooltip(self)
         if #list == 0 then
             GameTooltip:AddLine(L["None in your bags."], C.muted[1], C.muted[2], C.muted[3])
         end
-        GameTooltip:AddLine(L["Click to show all of it in a row, then click one to use it."], 0.6, 0.6, 0.6, true)
+        GameTooltip:AddLine(L["Click to show all of it in a row, then click one to use it. Right-click to hide some of it."],
+            0.6, 0.6, 0.6, true)
         GameTooltip:Show()
         return
     elseif self.kind.combo then
@@ -918,7 +919,7 @@ local function ShowButtonTooltip(self)
     elseif self.kind.slot == 17 then
         GameTooltip:AddLine(L["Click to put it on your off-hand weapon."], 0.6, 0.6, 0.6, true)
     end
-    GameTooltip:AddLine(L["Right-click to choose another item."], 0.6, 0.6, 0.6, true)
+    GameTooltip:AddLine(L["Right-click to choose another item, or hide one."], 0.6, 0.6, 0.6, true)
     GameTooltip:Show()
 end
 
@@ -979,12 +980,12 @@ local function CreateItemButton(kind)
     button.cooldown:SetScript("OnCooldownDone", function() UpdateLook(button) end)
     ApplyStyle(button)
 
-    -- Camp gear: either click opens its row.
+    -- Camp gear: a click opens its row, a right-click its list.
     button:SetScript("PostClick", function(self, mouseButton)
-        if self.kind.flyout then
-            ns.ToggleFlyout(self)
-        elseif mouseButton == "RightButton" then
+        if mouseButton == "RightButton" then
             ns.TogglePicker(self)
+        elseif self.kind.flyout then
+            ns.ToggleFlyout(self)
         elseif self.locked and not IsShiftKeyDown() and UIErrorsFrame then
             UIErrorsFrame:AddMessage(L["Nothing to cure. Shift-click to use it anyway."], 1, 0.1, 0.1)
         end
@@ -1389,18 +1390,49 @@ local function GetRow(i)
     row.name:SetWordWrap(false)
 
     row.count = ns.Text(row, 12, C.muted)
-    row.count:SetPoint("RIGHT", -10, 0)
     row.count:SetJustifyH("RIGHT")
 
+    -- A small x on each item: hides it from every button (see ns.SetHidden).
+    row.hide = CreateFrame("Button", nil, row)
+    row.hide:SetSize(20, 20)
+    row.hide:SetPoint("RIGHT", -6, 0)
+    row.hide.icon = row.hide:CreateTexture(nil, "ARTWORK")
+    row.hide.icon:SetTexture(MEDIA .. "icon-close")
+    row.hide.icon:SetSize(10, 10)
+    row.hide.icon:SetPoint("CENTER")
+    ns.SetColor(row.hide.icon, C.muted)
+    row.hide:SetScript("OnEnter", function(self)
+        ns.SetColor(self.icon, C.text)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(L["Hide"], 1, 1, 1)
+        GameTooltip:AddLine(L["No button uses it until you show it again, under Hidden at the bottom of this list."],
+            0.6, 0.6, 0.6, true)
+        GameTooltip:Show()
+    end)
+    row.hide:SetScript("OnLeave", function(self)
+        ns.SetColor(self.icon, C.muted)
+        GameTooltip:Hide()
+    end)
+    row.hide:SetScript("OnClick", function() ns.SetHidden(row.itemID, true) end)
+
+    -- An item: use it on this button. A hidden one: show it again. Camp
+    -- gear only lists its items (they're used from the row).
     row:SetScript("OnClick", function(self)
-        ns.SetChoice(picker.owner.kind.key, self.itemID)
-        picker:Hide()
+        if self.unhide then
+            ns.SetHidden(self.itemID, false)
+        elseif not picker.owner.kind.flyout then
+            ns.SetChoice(picker.owner.kind.key, self.itemID)
+            picker:Hide()
+        end
     end)
     row:SetScript("OnEnter", function(self)
         if self:IsEnabled() then self.highlight:Show() end
         if self.itemID then
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
             GameTooltip:SetItemByID(self.itemID)
+            if self.unhide then
+                GameTooltip:AddLine(L["Hidden: click to show it again."], C.accent[1], C.accent[2], C.accent[3], true)
+            end
             GameTooltip:Show()
         end
     end)
@@ -1516,11 +1548,21 @@ function ns.RefreshPicker()
     picker.title:SetText(kind.name:upper())
 
     local count, width = 0, picker.title:GetStringWidth() + 28
-    local function Add(itemID, icon, name, countText, enabled, selected)
+    -- mode: "item" (has the hide x) or "hidden" (click to show it again).
+    local function Add(itemID, icon, name, countText, enabled, selected, mode)
         count = count + 1
         local row = GetRow(count)
         row.itemID = itemID
+        row.unhide = mode == "hidden"
+        row.hide:SetShown(mode == "item")
+        row.count:ClearAllPoints()
+        if mode == "item" then
+            row.count:SetPoint("RIGHT", row.hide, "LEFT", -2, 0)
+        else
+            row.count:SetPoint("RIGHT", -10, 0)
+        end
         row.icon:SetTexture(icon)
+        row.icon:SetDesaturated(mode == "hidden")
         row.icon:SetShown(icon ~= nil)
         row.name:ClearAllPoints()
         if icon then
@@ -1534,15 +1576,19 @@ function ns.RefreshPicker()
         row:SetEnabled(enabled)
         row:Show()
         local rowWidth = (icon and 40 or 12) + row.name:GetStringWidth() + 24 + row.count:GetStringWidth() + 10
+            + (mode == "item" and 22 or 0)
         width = math.max(width, rowWidth + 8)
     end
 
+    -- Camp gear only lists its items, to hide some: they're used from its row.
+    local listOnly = kind.flyout
+    local hidden = ns.HiddenFor(kind.key)
     if kind.combo then
         Add(nil, nil, "|cff8a8b93" .. L["Uses your Food and Drink buttons' items."] .. "|r", "", false, false)
     elseif #list == 0 then
         Add(nil, nil, "|cff8a8b93" .. L["None in your bags."] .. "|r", "", false, false)
     else
-        Add(nil, list[1].icon, L["Best available"], "", true, not usingChoice)
+        if not listOnly then Add(nil, list[1].icon, L["Best available"], "", true, not usingChoice) end
         for _, entry in ipairs(list) do
             local name = entry.name
             local color = ITEM_QUALITY_COLORS and ITEM_QUALITY_COLORS[entry.quality]
@@ -1552,7 +1598,13 @@ function ns.RefreshPicker()
                 name = color.hex .. name .. "|r"
             end
             Add(entry.itemID, entry.icon, name, entry.usable and entry.count or L["can't use"],
-                entry.usable, usingChoice and entry.itemID == chosen)
+                entry.usable and not listOnly, usingChoice and entry.itemID == chosen, "item")
+        end
+    end
+    if #hidden > 0 then
+        Add(nil, nil, "|cff8a8b93" .. L["Hidden"]:upper() .. "|r", "", false, false)
+        for _, entry in ipairs(hidden) do
+            Add(entry.itemID, entry.icon, "|cff808080" .. entry.name .. "|r", L["show"], true, false, "hidden")
         end
     end
     for i = count + 1, #picker.rows do picker.rows[i]:Hide() end
@@ -1563,11 +1615,14 @@ function ns.RefreshPicker()
     picker.footer.minus:SetAlpha(lowStock > 0 and 1 or 0.4)
 
     -- Eat & drink picks nothing itself: its items come from Food and Drink.
-    picker.prefer:SetShown(not kind.combo)
+    -- Camp gear has neither a pick nor a count.
+    picker.footer:SetShown(not listOnly)
+    picker.prefer:SetShown(not kind.combo and not listOnly)
     picker.prefer.toggle:Update(true)
-    local preferHeight = kind.combo and 0 or PREFER_HEIGHT
+    local preferHeight = (kind.combo or listOnly) and 0 or PREFER_HEIGHT
+    local footerHeight = listOnly and 0 or FOOTER_HEIGHT
 
-    picker:SetSize(math.max(260, width), 30 + count * ROW_HEIGHT + 6 + preferHeight + FOOTER_HEIGHT)
+    picker:SetSize(math.max(260, width), 30 + count * ROW_HEIGHT + 6 + preferHeight + footerHeight)
     picker:ClearAllPoints()
     if ns.db.direction == "UP" or ns.db.direction == "DOWN" then
         picker:SetPoint("TOPLEFT", picker.owner, "TOPRIGHT", 8, 4) -- beside a vertical bar
@@ -1578,6 +1633,7 @@ end
 
 function ns.TogglePicker(button)
     if not picker then CreatePicker() end
+    if flyout and flyout:IsShown() and not InCombatLockdown() then flyout:Hide() end
     if picker:IsShown() and picker.owner == button then
         picker:Hide()
         return
