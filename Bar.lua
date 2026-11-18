@@ -362,6 +362,53 @@ local function SavePosition()
     end
 end
 
+-- The exact position, for the options: where the first button's outer
+-- corner is, from the player frame's top left while attached, otherwise
+-- from the middle of the screen (x to the right, y up), rounded. Returns
+-- x, y and "player" or "screen", or nil before the bar exists.
+function ns.GetPosition()
+    if not bar then return nil end
+    local saved = ns.db.position
+    local frame, ui = PlayerFrameToUse()
+    if ns.db.attached and frame then
+        local x, y
+        if saved and saved.frame == "player" and (saved.ui or "blizzard") == ui then
+            x, y = saved.x, saved.y
+        else
+            x, y = DefaultOffset()
+        end
+        return math.floor(x + 0.5), math.floor(y + 0.5), "player"
+    end
+    local x, y
+    if saved and saved.frame == "screen" then
+        x, y = saved.x, saved.y
+    else
+        local size = ns.db.buttonSize
+        local _, vertical, side = Shape()
+        x = side == "RIGHT" and (bar:GetRight() or 0) - size or (bar:GetLeft() or 0)
+        y = vertical == "BOTTOM" and (bar:GetBottom() or 0) + size or (bar:GetTop() or 0)
+    end
+    return math.floor(x - UIParent:GetWidth() / 2 + 0.5), math.floor(y - UIParent:GetHeight() / 2 + 0.5), "screen"
+end
+
+-- Moves the bar to an exact position, as ns.GetPosition gives it. Not in
+-- combat. Returns true if it moved.
+function ns.SetPosition(x, y)
+    if InCombatLockdown() then
+        ns.Print(L["You can't move the bar in combat."])
+        return false
+    end
+    if not bar then return false end
+    local frame, ui = PlayerFrameToUse()
+    if ns.db.attached and frame then
+        ns.db.position = { frame = "player", ui = ui, x = x, y = y }
+    else
+        ns.db.position = { frame = "screen", x = x + UIParent:GetWidth() / 2, y = y + UIParent:GetHeight() / 2 }
+    end
+    ApplyPosition()
+    return true
+end
+
 function ns.ResetPosition()
     if InCombatLockdown() then
         ns.Print(L["You can't move the bar in combat."])
@@ -372,6 +419,7 @@ function ns.ResetPosition()
         ApplyPosition()
         if not ns.db.attached then SavePosition() end -- the default spot, pinned to the screen
     end
+    if ns.RefreshWindow then ns.RefreshWindow() end
     return true
 end
 
@@ -460,12 +508,12 @@ end
 -- lookup by name finds nothing. true and the aura, or false if the game
 -- won't say.
 local function FindBuffByName(name)
-    local wanted = name:lower()
+    local wanted = ns.Lower(name)
     for i = 1, 40 do
         local ok, aura = AskAura(C_UnitAuras.GetAuraDataByIndex, "player", i, "HELPFUL")
         if not ok then return false end
         if not aura then return true, nil end
-        if Readable(aura.name) and aura.name:lower() == wanted then return true, aura end
+        if Readable(aura.name) and ns.Lower(aura.name) == wanted then return true, aura end
     end
     return true, nil
 end
@@ -528,6 +576,8 @@ function ns.AuraDebug(out)
         out(("  %s looks for \"%s\": by name %s; time left %s"):format(label, name, byName,
             left == nil and "none (glows gold)" or left == math.huge and "unknown" or ("%.1f min"):format(left / 60)))
     end
+    out(("Glow: %s, %s%%, pulse %s; sparkle from %s"):format(ns.db.glowStyle, tostring(ns.db.glowStrength),
+        tostring(ns.db.glowPulse), ns.ProcKind and ns.ProcKind() or "?"))
     out("What the reminders see:")
     Check("Buff food", ns.SpellName(WELL_FED) or "Well Fed")
     for _, key in ipairs({ "elixir", "scroll", "otherBuff" }) do
@@ -561,7 +611,7 @@ local function IsBleed(name, dispel)
             if spellName then bleedNames[spellName] = true end
         end
     end
-    return bleedNames[name] or name:lower():find(L["bleed"], 1, true) ~= nil
+    return bleedNames[name] or ns.Lower(name):find(L["bleed"], 1, true) ~= nil
 end
 
 -- Whether you have a debuff of this kind (Poison, Disease or Bleed): true
@@ -705,31 +755,173 @@ end
 -- PULSE_LOW and PULSE_HIGH. Runs only while some button glows.
 local PULSE_PERIOD = 3.2 -- seconds for a fade in and out
 local PULSE_LOW, PULSE_HIGH = 0.3, 0.85
+
+-- Every frame that can glow: the bar's buttons and the options' preview.
+local glowFrames = {}
+
+-- The look of the glow, from the Reminders page: style soft (the halo),
+-- border (a frame tight around the button), both, or proc (the action
+-- bars' sparkling proc glow); strength in percent; pulse on or off.
+local function GlowLook()
+    local db = ns.db
+    return db.glowStyle or "soft", (db.glowStrength or 100) / 100, db.glowPulse ~= false
+end
+
 local pulse = CreateFrame("Frame")
 pulse:Hide()
 pulse:SetScript("OnUpdate", function(self)
-    local phase = (GetTime() % PULSE_PERIOD) / PULSE_PERIOD
-    local alpha = PULSE_LOW + (PULSE_HIGH - PULSE_LOW) * (0.5 - 0.5 * math.cos(phase * 2 * math.pi))
+    local _, strength, pulsing = GlowLook()
+    local alpha = PULSE_HIGH
+    if pulsing then
+        local phase = (GetTime() % PULSE_PERIOD) / PULSE_PERIOD
+        alpha = PULSE_LOW + (PULSE_HIGH - PULSE_LOW) * (0.5 - 0.5 * math.cos(phase * 2 * math.pi))
+    end
     local glowing = false
-    for _, button in pairs(buttons) do
-        if button.glow:IsShown() then
-            button.glow:SetAlpha(alpha * button.glowStrength)
+    for frame in pairs(glowFrames) do
+        if frame.glowColor and frame:IsVisible() then
+            local value = math.min(1, alpha * frame.glowColor.strength * strength)
+            frame.glow:SetAlpha(value)
+            frame.ring:SetAlpha(value)
             glowing = true
         end
     end
     if not glowing then self:Hide() end
 end)
 
-local function UpdateGlow(button, empty)
-    local color = WantsGlow(button, empty)
-    if color then
-        button.glow:SetVertexColor(color[1], color[2], color[3])
-        button.glowStrength = color.strength
-        button.glow:Show()
-        pulse:Show()
-    else
-        button.glow:Hide()
+-- The proc glow. This client may have the game's own: the newer action
+-- bars' (ActionButtonSpellAlertTemplate) or the older ones'
+-- (ActionBarButtonSpellActivationAlert). Without either, Fanny Pack draws
+-- the older one's marching ants itself; without those, a border instead.
+local procKind -- "new", "old", "ants" or "none", once known
+
+local function HasTemplate(name)
+    if C_XMLUtil and C_XMLUtil.GetTemplateInfo then
+        return C_XMLUtil.GetTemplateInfo(name) ~= nil
     end
+    return nil -- can't tell
+end
+
+local function ProcKind()
+    if procKind then return procKind end
+    local new, old = HasTemplate("ActionButtonSpellAlertTemplate"), HasTemplate("ActionBarButtonSpellActivationAlert")
+    if new == nil then -- no way to look templates up: go by what else the game has
+        new = ActionButtonSpellAlertManager ~= nil
+        old = not new and ActionButton_ShowOverlayGlow ~= nil
+    end
+    procKind = new and "new" or old and "old" or "ants"
+    return procKind
+end
+ns.ProcKind = ProcKind -- for the debug report
+
+-- Colours every texture in a proc glow: as it comes for gold, or greyed and
+-- tinted for silver ("running out").
+local function TintProc(frame, color)
+    local silver = color[1] < 0.9
+    local function tint(region)
+        if region.SetVertexColor and region.GetObjectType and region:GetObjectType() == "Texture" then
+            region:SetDesaturated(silver)
+            if silver then region:SetVertexColor(color[1], color[2], color[3]) else region:SetVertexColor(1, 1, 1) end
+        end
+    end
+    for _, region in ipairs({ frame:GetRegions() }) do tint(region) end
+    for _, child in ipairs({ frame:GetChildren() }) do
+        for _, region in ipairs({ child:GetRegions() }) do tint(region) end
+    end
+end
+
+-- The proc glow frame of a button, made the first time it's needed. nil if
+-- this client has none.
+local function GetProc(button)
+    if button.proc ~= nil then return button.proc or nil end
+    local kind = ProcKind()
+    local ok, frame
+    if kind == "new" then
+        ok, frame = pcall(CreateFrame, "Frame", nil, button, "ActionButtonSpellAlertTemplate")
+        if ok and frame and frame.ProcLoop then
+            if frame.ProcStartFlipbook then frame.ProcStartFlipbook:SetAlpha(0) end -- no opening burst
+            if frame.ProcLoopFlipbook then frame.ProcLoopFlipbook:SetAlpha(1) end
+        else
+            frame = nil
+        end
+    elseif kind == "old" then
+        ok, frame = pcall(CreateFrame, "Frame", nil, button, "ActionBarButtonSpellActivationAlert")
+        if not (ok and frame and frame.ants) then frame = nil end
+    end
+    if not frame then
+        -- Our own marching ants, from the older proc glow's texture.
+        frame = CreateFrame("Frame", nil, button)
+        frame.ants = frame:CreateTexture(nil, "OVERLAY")
+        frame.ants:SetAllPoints()
+        local loaded = frame.ants:SetTexture("Interface\\SpellActivationOverlay\\IconAlertAnts")
+        if loaded == false or not AnimateTexCoords then
+            frame:Hide()
+            button.proc = false
+            return nil
+        end
+        frame:SetScript("OnUpdate", function(self, elapsed)
+            AnimateTexCoords(self.ants, 256, 256, 48, 48, 22, elapsed, 0.01)
+        end)
+        frame.own = true
+    end
+    -- The game stops an animation when its button is hidden (food in
+    -- combat, a button whose item ran out) and doesn't start it again when
+    -- the button comes back: start it again on every show.
+    frame:HookScript("OnShow", function(self)
+        if self.ProcLoop and not self.ProcLoop:IsPlaying() then self.ProcLoop:Play() end
+    end)
+    frame:Hide()
+    button.proc = frame
+    return frame
+end
+
+local function StopProc(button)
+    local frame = button.proc
+    if not frame then return end
+    if frame.ProcLoop then frame.ProcLoop:Stop() end
+    if frame.animIn then frame.animIn:Stop() end
+    frame:Hide()
+end
+
+local function StartProc(button, color)
+    local frame = GetProc(button)
+    if not frame then return false end
+    local width, height = button:GetSize()
+    frame:ClearAllPoints()
+    frame:SetSize(width * 1.4, height * 1.4) -- as the action bars size it
+    frame:SetPoint("CENTER", button, "CENTER")
+    frame:SetFrameLevel(button:GetFrameLevel() + 5)
+    TintProc(frame, color)
+    local _, strength = GlowLook()
+    frame:SetAlpha(math.min(1, color.strength * strength * (color.strength < 1 and 2 or 1)))
+    if not frame:IsShown() then
+        frame:Show()
+        if frame.animIn then frame.animIn:Play() end
+    end
+    -- Also if it stopped for any other reason: every look update restarts it.
+    if frame.ProcLoop and not frame.ProcLoop:IsPlaying() then frame.ProcLoop:Play() end
+    return true
+end
+
+-- Shows a frame's glow in color (GLOW_MISSING or GLOW_EXPIRING) in the
+-- chosen look, or hides it (color nil).
+local function ShowGlow(frame, color)
+    local style = GlowLook()
+    local proc = color and style == "proc" and StartProc(frame, color)
+    if not proc then StopProc(frame) end
+    -- Without a proc glow on this client, the proc style shows a border.
+    local soft = color and (style == "soft" or style == "both")
+    local ring = color and (style == "border" or style == "both" or (style == "proc" and not proc))
+    frame.glow:SetShown(soft and true or false)
+    frame.ring:SetShown(ring and true or false)
+    if soft then frame.glow:SetVertexColor(color[1], color[2], color[3]) end
+    if ring then frame.ring:SetVertexColor(color[1], color[2], color[3]) end
+    frame.glowColor = (soft or ring) and color or nil
+    frame.glowing = color ~= nil
+    if frame.glowColor then pulse:Show() end
+end
+
+local function UpdateGlow(button, empty)
+    ShowGlow(button, WantsGlow(button, empty))
 end
 
 -- The size of one screen pixel in a frame's units, so borders stay crisp
@@ -784,6 +976,14 @@ local function ApplyStyle(button)
 
     button.glow:SetTexture(MEDIA .. "glow-" .. db.shape)
     button.glow:SetSize(db.buttonSize * 2, db.buttonSize * 2) -- the button covers its middle half
+    -- The border glow: the button's shape, a few pixels bigger, behind it.
+    if maskFile then
+        button.ring:SetTexture(MEDIA .. maskFile)
+    else
+        button.ring:SetColorTexture(1, 1, 1, 1)
+    end
+    local thickness = math.max(2, math.floor(db.buttonSize * 0.1 + 0.5))
+    button.ring:SetSize(db.buttonSize + thickness * 2, db.buttonSize + thickness * 2)
 end
 
 -- Short key names, like the action bars: SHIFT-1 becomes S1.
@@ -812,7 +1012,7 @@ local visibility = 1
 -- glowing buff food button, so its reminder still shows.
 local function ApplyAlpha(button)
     local alpha = button.empty and 0.4 or 1
-    if not button.glow:IsShown() then alpha = alpha * visibility end
+    if not button.glowing then alpha = alpha * visibility end
     button:SetAlpha(alpha)
 end
 
@@ -941,6 +1141,10 @@ local function AddButtonParts(button)
     button.glow:SetPoint("CENTER")
     button.glow:SetBlendMode("BLEND")
     button.glow:Hide()
+    button.ring = button:CreateTexture(nil, "BACKGROUND", nil, -1)
+    button.ring:SetPoint("CENTER")
+    button.ring:Hide()
+    glowFrames[button] = true
 
     button:SetHighlightTexture("Interface\\Buttons\\ButtonHilight-Square", "ADD")
     button:GetHighlightTexture():SetAllPoints(button.icon)
@@ -966,6 +1170,35 @@ local function AddButtonParts(button)
     button.count:SetPoint("BOTTOMRIGHT", -2, 2)
     button.hotkey = overlay:CreateFontString(nil, "OVERLAY", "NumberFontNormalSmallGray")
     button.hotkey:SetPoint("TOPRIGHT", -1, -1)
+end
+
+-- Two sample buttons for the options' Glow look card: one glowing gold
+-- (missing), one silver (running out), in the chosen look.
+function ns.CreateGlowPreview(parent)
+    local holder = CreateFrame("Frame", nil, parent)
+    holder.samples = {}
+    for i, color in ipairs({ GLOW_MISSING, GLOW_EXPIRING }) do
+        local sample = CreateFrame("Button", nil, holder)
+        sample.kind = ns.KIND_BY_KEY.buffFood
+        AddButtonParts(sample)
+        sample.icon:SetTexture(ns.KindIcon(ns.KIND_BY_KEY[i == 1 and "buffFood" or "elixir"]))
+        sample:EnableMouse(false)
+        sample.color = color
+        holder.samples[i] = sample
+    end
+    function holder:Refresh()
+        local size = ns.db.buttonSize
+        self:SetSize(size * 2 + 24, size + 16)
+        for i, sample in ipairs(self.samples) do
+            ApplyStyle(sample)
+            sample:SetSize(size, size)
+            sample:ClearAllPoints()
+            sample:SetPoint("LEFT", (i - 1) * (size + 24) + 8, 0)
+            ShowGlow(sample, sample.color)
+        end
+    end
+    holder:SetScript("OnShow", holder.Refresh)
+    return holder
 end
 
 local function CreateItemButton(kind)
@@ -1133,7 +1366,7 @@ fader:Hide()
 local function FadeTarget()
     if InCombatLockdown() or not ns.account.locked then return 1 end
     if bar:IsMouseOver(8, -8, -8, 8) then return 1 end
-    if (picker and picker:IsShown()) or (flyout and flyout:IsShown())
+    if (picker and picker:IsShown()) or (flyout and flyout:IsShown()) or (ns.TourShowing and ns.TourShowing())
         or (FannyPackFrame and FannyPackFrame:IsShown()) then
         return 1
     end
@@ -1283,6 +1516,25 @@ function ns.ToggleFlyout(button)
     if RefreshFlyout() then flyout:Show() end
 end
 
+-- For the tour: the bar, its first button on show, and a glowing button.
+function ns.BarFrame()
+    return bar
+end
+
+function ns.FirstShownButton()
+    for _, key in ipairs(ns.Order()) do
+        local button = buttons[key]
+        if button and button:IsShown() then return button end
+    end
+end
+
+function ns.GlowingButton()
+    for _, key in ipairs(ns.Order()) do
+        local button = buttons[key]
+        if button and button:IsShown() and button.glowing then return button end
+    end
+end
+
 function ns.UpdateBar()
     if not bar then return end
     SecureUpdate()
@@ -1307,7 +1559,10 @@ local function CreateMover()
     mover = CreateFrame("Frame", nil, bar)
     mover:SetPoint("TOPLEFT", -4, 4)
     mover:SetPoint("BOTTOMRIGHT", 4, -4)
-    mover:SetFrameLevel(bar:GetFrameLevel() + 20) -- above the buttons, so it gets the clicks
+    -- Above the buttons, so it gets the clicks, and above other frames (the
+    -- player frame just below the bar), so all its arrows can be clicked.
+    mover:SetFrameStrata("DIALOG")
+    mover:SetFrameLevel(bar:GetFrameLevel() + 20)
     ns.Rounded(mover, "BACKGROUND", { C.accent[1], C.accent[2], C.accent[3], 0.3 })
     ns.Rounded(mover, "BORDER", C.accent, "rounded-border")
 
@@ -1330,14 +1585,115 @@ local function CreateMover()
     mover:SetScript("OnMouseUp", function(_, mouseButton)
         if mouseButton == "RightButton" then ns.SetLocked(true) end
     end)
+    -- Nudging: small arrows around the bar, and the arrow keys while the
+    -- mouse is over it (only then, so they still walk otherwise). One
+    -- pixel a step, ten with Shift.
+    local function Nudge(dx, dy)
+        local step = IsShiftKeyDown() and 10 or 1
+        ns.NudgeBar(dx * step, dy * step)
+    end
+    local KEYS = { UP = { 0, 1 }, DOWN = { 0, -1 }, LEFT = { -1, 0 }, RIGHT = { 1, 0 } }
+    mover:SetScript("OnKeyDown", function(self, key)
+        if InCombatLockdown() then return end
+        local direction = KEYS[key]
+        self:SetPropagateKeyboardInput(direction == nil)
+        if direction then
+            Nudge(direction[1], direction[2])
+            -- Let every other key through again (it can't change in combat).
+            C_Timer.After(0, function()
+                if not InCombatLockdown() then self:SetPropagateKeyboardInput(true) end
+            end)
+        end
+    end)
+    local arrows = {}
+    local function Hovered()
+        if mover:IsMouseOver() then return true end
+        for _, arrow in ipairs(arrows) do
+            if arrow:IsMouseOver() then return true end
+        end
+        return false
+    end
+    local function KeysOn(on)
+        if InCombatLockdown() then return end
+        mover:EnableKeyboard(on)
+        if on then mover:SetPropagateKeyboardInput(true) end
+    end
+
+    -- The arrows: the chevron points down, so it's turned for the others.
+    local ARROWS = {
+        { 0, 1, "BOTTOM", label, "TOP", 0, 1, nil, true },
+        { 0, -1, "TOP", mover, "BOTTOM", 0, -2 },
+        { -1, 0, "RIGHT", mover, "LEFT", -2, 0, -math.pi / 2 },
+        { 1, 0, "LEFT", mover, "RIGHT", 2, 0, math.pi / 2 },
+    }
+    for _, info in ipairs(ARROWS) do
+        local dx, dy, point, relativeTo, relativePoint, x, y, rotation, flip = unpack(info)
+        local arrow = CreateFrame("Button", nil, mover)
+        arrow:SetSize(18, 18)
+        arrow:SetPoint(point, relativeTo, relativePoint, x, y)
+        local bg = ns.Rounded(arrow, "BACKGROUND", C.bg)
+        bg:SetAlpha(0.9)
+        local icon = arrow:CreateTexture(nil, "ARTWORK")
+        icon:SetTexture(MEDIA .. "icon-chevron")
+        icon:SetSize(12, 12)
+        icon:SetPoint("CENTER")
+        if flip then icon:SetTexCoord(0, 1, 1, 0) end
+        if rotation then icon:SetRotation(rotation) end
+        ns.SetColor(icon, C.accent)
+        -- Held down, it keeps going after a moment.
+        local held, wait = false, 0
+        arrow:SetScript("OnMouseDown", function()
+            Nudge(dx, dy)
+            held, wait = true, 0.4
+        end)
+        arrow:SetScript("OnMouseUp", function() held = false end)
+        arrow:SetScript("OnUpdate", function(_, elapsed)
+            if not held then return end
+            wait = wait - elapsed
+            if wait <= 0 then
+                Nudge(dx, dy)
+                wait = 0.05
+            end
+        end)
+        arrow:SetScript("OnEnter", function(self)
+            ns.SetColor(icon, C.text)
+            KeysOn(true)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText(L["Move one pixel"], 1, 1, 1)
+            GameTooltip:AddLine(L["Hold to keep moving, Shift for 10 pixels. The arrow keys work too while the mouse is over the bar."],
+                0.6, 0.6, 0.6, true)
+            GameTooltip:Show()
+        end)
+        arrow:SetScript("OnLeave", function()
+            ns.SetColor(icon, C.accent)
+            held = false
+            GameTooltip:Hide()
+            if not Hovered() then KeysOn(false) end
+        end)
+        arrows[#arrows + 1] = arrow
+    end
+
     mover:SetScript("OnEnter", function(self)
+        KeysOn(true)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText("Fanny Pack", 1, 1, 1)
-        GameTooltip:AddLine(L["Drag to move the bar. Right-click to lock it."], 0.6, 0.6, 0.6, true)
+        GameTooltip:AddLine(L["Drag to move the bar, or use the arrows or your arrow keys for one pixel at a time (Shift: 10). Right-click to lock it."],
+            0.6, 0.6, 0.6, true)
         GameTooltip:Show()
     end)
-    mover:SetScript("OnLeave", GameTooltip_Hide)
+    mover:SetScript("OnLeave", function()
+        GameTooltip:Hide()
+        if not Hovered() then KeysOn(false) end
+    end)
     mover:Hide()
+end
+
+-- Moves the bar a few pixels (x right, y up), from the unlocked bar's
+-- arrows and arrow keys. Not in combat.
+function ns.NudgeBar(dx, dy)
+    local x, y = ns.GetPosition()
+    if not x then return end
+    if ns.SetPosition(x + dx, y + dy) and ns.RefreshWindow then ns.RefreshWindow() end
 end
 
 function ns.StopMoving()
@@ -1346,6 +1702,7 @@ function ns.StopMoving()
     bar:StopMovingOrSizing()
     SavePosition()
     ApplyPosition()
+    if ns.RefreshWindow then ns.RefreshWindow() end -- the X and Y in the options
 end
 
 -- Returns true if the change was made.
@@ -1756,6 +2113,11 @@ events:SetScript("OnEvent", function(_, event)
             for _, button in pairs(buttons) do UpdateLook(button) end -- no reminders in a fight
         end
         if bar then ns.StopMoving() end -- in case combat starts mid-drag
+        -- No arrow-key nudging in a fight: every key goes to the game.
+        if mover and not InCombatLockdown() then
+            mover:SetPropagateKeyboardInput(true)
+            mover:EnableKeyboard(false)
+        end
         if flyout then flyout:Hide() end -- its buttons can't change in a fight
         -- Arm the cures for the fight while the buttons can still change
         -- (combat lockdown starts just after this event).

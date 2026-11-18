@@ -175,6 +175,9 @@ local PROFILE_DEFAULTS = {
     otherBuffGlow = true, -- the Other buffs button glows while its buff isn't on you
     cureGlow = true, -- the cure buttons glow while you have a debuff they cure
     campOutdoorsOnly = true, -- the Camp gear button hides in dungeons, raids, cities and inns
+    glowStyle = "soft", -- the reminder glow: soft (a halo), border, both, or proc (the action bars' sparkle)
+    glowStrength = 100, -- how strongly it shows, in percent (50 to 200)
+    glowPulse = true, -- false: a steady glow
     preferLow = {}, -- [button key] = true: pick the lowest-level item and smallest stack first
     fadeOutOfCombat = false, -- hide the bar out of combat until you hover over it
     useOnTarget = false, -- bandages and scrolls go on a friendly target instead of always on you
@@ -291,11 +294,11 @@ end
 local function TooltipHas(itemID, text, needsUse)
     local lines = TooltipLines(itemID)
     if not lines then return nil end
-    local useLabel = needsUse and (ITEM_SPELL_TRIGGER_ONUSE or "Use:"):lower()
+    local useLabel = needsUse and ns.Lower(ITEM_SPELL_TRIGGER_ONUSE or "Use:")
     local found, hasUse = false, not needsUse
-    text = text:lower()
+    text = ns.Lower(text)
     for _, line in pairs(lines) do
-        line = line and line:lower()
+        line = line and ns.Lower(line)
         if line then
             if line:find(text, 1, true) then found = true end
             if useLabel and line:find(useLabel, 1, true) == 1 then hasUse = true end
@@ -324,9 +327,9 @@ end
 local function UseLine(itemID)
     local lines = TooltipLines(itemID)
     if not lines then return nil end
-    local useLabel = (ITEM_SPELL_TRIGGER_ONUSE or "Use:"):lower()
+    local useLabel = ns.Lower(ITEM_SPELL_TRIGGER_ONUSE or "Use:")
     for _, line in pairs(lines) do
-        line = line and line:lower()
+        line = line and ns.Lower(line)
         if line and line:find(useLabel, 1, true) == 1 then return line end
     end
 end
@@ -387,7 +390,7 @@ local function IsCamp(itemID)
     if CAMP_ITEMS[itemID] then return true end
     local name = C_Item.GetItemInfo(itemID)
     if not name then return nil end
-    name = name:lower()
+    name = ns.Lower(name)
     if name:find(L["camp "], 1, true) == 1 then return true end
     local line = UseLine(itemID)
     if not line then return nil end
@@ -401,7 +404,7 @@ end
 -- First Aid's cures, by name: Anti-Venom, and Forever's poultices and
 -- tourniquets (filed as trade goods, not consumables).
 local function CureKind(itemID)
-    local name = (C_Item.GetItemInfo(itemID) or ""):lower()
+    local name = ns.Lower(C_Item.GetItemInfo(itemID) or "")
     return (name:find(L["anti-venom"], 1, true) and "antiVenom")
         or (name:find(L["poultice"], 1, true) and "poultice")
         or (name:find(L["tourniquet"], 1, true) and "tourniquet")
@@ -459,7 +462,7 @@ local function Classify(itemID)
 
     -- First Aid's cures go by their names, before their use effects: some
     -- may share First Aid's with bandages.
-    local name = (C_Item.GetItemInfo(itemID) or ""):lower()
+    local name = ns.Lower(C_Item.GetItemInfo(itemID) or "")
     local cure = CureKind(itemID)
     if cure then
         itemKinds[itemID] = cure
@@ -589,8 +592,8 @@ end
 
 -- The camp gear row: campfires first, then by name.
 local function CampFirst(a, b)
-    local aFire = a.name:lower():find(L["campfire"], 1, true) ~= nil
-    local bFire = b.name:lower():find(L["campfire"], 1, true) ~= nil
+    local aFire = ns.Lower(a.name):find(L["campfire"], 1, true) ~= nil
+    local bFire = ns.Lower(b.name):find(L["campfire"], 1, true) ~= nil
     if aFire ~= bFire then return aFire end
     if a.name ~= b.name then return a.name < b.name end
     return a.itemID < b.itemID
@@ -874,6 +877,23 @@ function ns.KindOf(itemID)
     return Classify(itemID)
 end
 
+function ns.SetGlowStyle(style)
+    db.glowStyle = style
+    ns.UpdateBar()
+    if ns.RefreshWindow then ns.RefreshWindow() end -- the preview, and dims Pulse
+end
+
+function ns.SetGlowStrength(value)
+    db.glowStrength = math.floor(value + 0.5)
+    ns.UpdateBar()
+    if ns.RefreshWindow then ns.RefreshWindow() end
+end
+
+function ns.SetGlowPulse(value)
+    db.glowPulse = value and true or false
+    ns.UpdateBar()
+end
+
 function ns.SetPreferLow(key, value)
     db.preferLow[key] = value and true or nil
     ns.UpdateBar()
@@ -979,6 +999,28 @@ function ns.MoveButton(key, delta)
             return
         end
     end
+end
+
+-- Moves a button to just before another one (before = nil: to the end),
+-- for dragging in the options.
+function ns.MoveButtonTo(key, before)
+    if key == before then return end
+    local order = db.order
+    for i, k in ipairs(order) do
+        if k == key then
+            table.remove(order, i)
+            break
+        end
+    end
+    local at = #order + 1
+    for i, k in ipairs(order) do
+        if k == before then
+            at = i
+            break
+        end
+    end
+    table.insert(order, at, key)
+    ns.UpdateBar()
 end
 
 ------------------------------------------------------------------------
@@ -1091,6 +1133,7 @@ local function ShowHelp()
     print(L["  /fannypack reset - put the bar back above your player frame"])
     print(L["  /fannypack profile [name] - show or switch this character's profile"])
     print(L["  /fannypack minimap - show or hide the minimap button"])
+    print(L["  /fannypack tour - a short tour of the bar"])
     print(L["  /fannypack debug - a report to copy into bug reports: your items and their buttons"])
 end
 
@@ -1109,6 +1152,8 @@ SlashCmdList.FANNYPACK = function(msg)
         if ns.ResetPosition() then
             Print(L["The bar is back above your player frame."])
         end
+    elseif command == "tour" then
+        ns.StartTour()
     elseif command == "debug" then
         ns.ShowDebugReport()
     elseif command == "profile" then
@@ -1205,6 +1250,7 @@ local function LoadProfile(name)
 end
 
 local function LoadSettings()
+    ns.freshInstall = FannyPackDB == nil -- no "what's new" on a first install
     FannyPackDB = FannyPackDB or {}
     account = FannyPackDB
     FannyPackCharDB = FannyPackCharDB or {}
@@ -1321,9 +1367,11 @@ frame:SetScript("OnEvent", function(self, event, arg1)
     if event == "ADDON_LOADED" then
         if arg1 == ADDON_NAME then LoadSettings() end
     elseif event == "PLAYER_LOGIN" then
+        if ns.InitNews then ns.InitNews() end
         ns.CreateBar()
         ns.Scan()
         ns.UpdateBar()
+        if ns.InitTour then ns.InitTour() end
         self:RegisterEvent("BAG_UPDATE_DELAYED")
         self:RegisterEvent("GET_ITEM_INFO_RECEIVED")
         self:RegisterEvent("PLAYER_LEVEL_UP")

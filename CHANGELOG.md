@@ -1,5 +1,16 @@
 # Changelog
 
+## 1.6.0
+
+New:
+- **Russian translation**, thanks to Anemun. Fanny Pack now also matches Russian item names and tooltips regardless of capital letters
+- **Glow look**, at the top of the Reminders page: choose how the reminder glow looks. **Soft** is the halo from before, **Border** a frame tight around the button that's easy to see on any ground, **Both** shows the two together, and **Sparkle** is the action bars' sparkling proc glow. **Strength** sets how strongly it shows (50 to 200%), and **Pulse** turns the slow fade in and out off for a steady glow. A preview with a gold (missing) and a silver (running out) sample shows the result as you change it
+- **Exact position** on the Bar page: type the bar's X and Y to place it to the point. While the bar is attached they're measured from the player frame's top left, otherwise from the middle of the screen. They follow along when you drag the bar. While the bar is unlocked, small arrows around it (and your arrow keys, while the mouse is over the bar) move it one pixel at a time, or ten with Shift
+- **A short tour** on your first login: four small speech bubbles beside the bar explain what it holds, clicking and right-clicking, the reminder glows, and where to find the options. It never starts in combat (a fight pauses it), and **Skip tour** or Escape ends it. Play it again with `/fannypack tour` or **Show the tour** on the Bar page
+- **What's new**: after an update with new features, one line in chat says what's new (turn it off on the Bar page with **Tell me about new features**). The first time you open the options after the update, a card at the top lists the new features, each with a **Show me** link to its page, until you click **Got it**. A gold dot marks the pages with something new until you've visited them. Bug-fix updates stay quiet, and a first install shows none of it
+- **Items page** in the options: the Hidden items list, and the settings for how items are used (Use on your target, Hide empty buttons, Camp gear only where you can camp), which used to sit under the button list
+- **Drag and drop** to order the buttons: on the Buttons page, drag a row by its grip (or anywhere on it) to move its button. The other rows make room, and the page scrolls when you drag near its top or bottom. The arrows still move a button one place. The list's rows are a little tighter, and the Key Bindings button sits beside it, so the Buttons page is much shorter
+
 ## 1.5.0
 
 New:

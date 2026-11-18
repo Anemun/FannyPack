@@ -16,6 +16,8 @@ Locales/Locales.lua
 Locales/ruRU.lua
 
 FannyPack.lua
+News.lua
 UI.lua
 Bar.lua
 Minimap.lua
+Tour.lua

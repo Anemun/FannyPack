@@ -72,6 +72,11 @@ Turn on **Hide while on** for a reminder and its buttons stay off the bar
 while the buff is on you, coming back when it's gone or running out. For the
 cures, it keeps them off the bar until you have a poison, disease or bleed.
 
+**Make the glow easy to see** on the options' Reminders page: a soft halo,
+a border tight around the button (clear on any ground), both, or the action
+bars' sparkling proc glow; how strongly it shows (50 to 200%); and whether it
+pulses. A preview shows the result as you change it.
+
 The silver glow starts 2 minutes before a buff or weapon stone runs out. On
 the options' Reminders page you can set it separately for Well Fed (up to 15
 minutes), elixirs (60), scrolls (30), other buffs (60) and weapons (30), or 0
@@ -89,7 +94,7 @@ can turn the warning off altogether.
 **Hide items** you don't want on any button, like a flask you're saving
 for a raid: click the small **x** next to it in a button's right-click
 list. No button uses it from then on. Hidden items are listed under
-**Hidden** at the bottom of that list and on the options' Buttons page,
+**Hidden** at the bottom of that list and on the options' Items page,
 where you can show them again.
 
 Buttons for things you don't carry are hidden (or faded, if you prefer).
@@ -121,9 +126,14 @@ Type `/fannypack` (or click the minimap button) to open the options.
   frame in Edit Mode, also after you've dragged it. Turn this off to pin it
   to the screen
 - **Unlock** it to drag it anywhere, and **reset** it to put it back
+- **Exact position**: type X and Y on the Bar page to place it to the point,
+  from the player frame while attached, otherwise from the middle of the screen.
+  Or nudge the unlocked bar with the small arrows around it, or your arrow keys
+  while the mouse is over it: one pixel at a time, ten with Shift
 
 **How it's laid out**
-- **Sort the buttons** in any order, and turn each one on or off per character
+- **Sort the buttons** in any order by dragging them in the options list, and
+  turn each one on or off per character
 - Let the bar **grow** right, left, down or up from its first button. The
   first button always stays put: turning buttons on or off, or hiding them
   in combat, never moves it
@@ -146,8 +156,12 @@ Type `/fannypack` (or click the minimap button) to open the options.
   reset and delete them in the options, or type `/fannypack profile <name>`
   (handy in a macro)
 
-The options are split into pages (Buttons, Bar, Look, Reminders and
-Profiles), and the window can be resized to fit small screens.
+The options are split into pages (Buttons, Items, Bar, Look, Reminders and
+Profiles), and the window can be resized to fit small screens. After an
+update with new features, a line in chat and a card at the top of the
+options say what's new (the chat line can be turned off). On your first
+login, a short tour beside the bar shows you around; `/fannypack tour` plays
+it again.
 
 ## Commands
 
@@ -158,6 +172,7 @@ Profiles), and the window can be resized to fit small screens.
 | `/fannypack reset` | Put the bar back above your player frame |
 | `/fannypack profile [name]` | Show or switch this character's profile |
 | `/fannypack minimap` | Show or hide the minimap button |
+| `/fannypack tour` | A short tour of the bar |
 | `/fannypack debug` | A report to copy into bug reports: the items in your bags and which button each one is on |
 
 ## Reporting bugs
@@ -167,6 +182,12 @@ Fanny Pack version (shown next to the title in the options, `/fannypack`)
 and any error message you got. If an item is on the wrong button, or on
 none, type `/fannypack debug`, press Ctrl+C in the window that opens (the
 text is already selected) and paste it into your report.
+
+## Translations
+
+Fanny Pack is in English and Russian. A big thank you to **Anemun** for the
+Russian translation! More translations are welcome: see `Locales/` for how to
+add one.
 
 ## About me
 

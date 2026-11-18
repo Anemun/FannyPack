@@ -8,8 +8,11 @@
     glow-round.tga                     128x128 soft glows around a button of
                                        each shape; the button covers the
                                        middle 64x64
-    icon-look.tga, icon-clock.tga      32x32 sidebar icons for the Look and
-                                       Reminders pages, in the style of
+    icon-look.tga, icon-clock.tga,
+    pointer.tga                        32x32 triangle pointing down, for
+                                       the tour's speech bubble
+    icon-items.tga                     32x32 sidebar icons for the Look,
+                                       Reminders and Items pages, in the style of
                                        Pocket Goblin's (icon-list, icon-sort
                                        and icon-profile come from there)
 
@@ -86,6 +89,43 @@ def clock(x, y):
     return min(face, hour, minute)
 
 
+def rect(x, y, cx, cy, half_width, half_height, radius):
+    """Distance to a rounded rectangle centred on (cx, cy) (negative inside)."""
+    qx = abs(x - cx) - half_width + radius
+    qy = abs(y - cy) - half_height + radius
+    return math.hypot(max(qx, 0), max(qy, 0)) + min(max(qx, qy), 0) - radius
+
+
+def flask(x, y):
+    """A round potion flask with a neck and a liquid line (y grows downward)."""
+    body = math.hypot(x, y - 4) - 8.5
+    outline = abs(body) - 1.25
+    # Open the top of the body where the neck joins it.
+    opening = max(abs(x) - 2, y + 2)
+    outline = max(outline, -opening)
+    neck = abs(rect(x, y, 0, -8, 3.25, 4.5, 1)) - 1.25
+    neck = max(neck, y + 4.5)  # only above the body: the neck stays open into it
+    liquid = capsule(x, y, -5.5, 6, 5.5, 6, 1.25)
+    return min(outline, neck, liquid)
+
+
+def half_plane(x, y, ax, ay, bx, by):
+    """Signed distance to the line through a and b; negative on its left
+    (seen walking from a to b)."""
+    dx, dy = bx - ax, by - ay
+    length = math.hypot(dx, dy)
+    return ((x - ax) * dy - (y - ay) * dx) / length
+
+
+def pointer(x, y):
+    """A triangle pointing down, its flat side along the top edge (y grows
+    downward), so it joins the bubble above it."""
+    top = -16 - y  # the flat side: the texture's top edge
+    left = half_plane(x, y, 0, 6, -14, -16)
+    right = half_plane(x, y, 14, -16, 0, 6)
+    return max(top, left, right)
+
+
 def main():
     for shape in ("rounded", "round"):
         distance = SHAPES[shape]
@@ -97,8 +137,9 @@ def main():
             return math.exp(-((outside / GLOW_SPREAD) ** 2))
         save("glow-" + shape, 128, glow)
 
-    for name, shape in (("icon-look", eye), ("icon-clock", clock)):
+    for name, shape in (("icon-look", eye), ("icon-clock", clock), ("icon-items", flask)):
         save(name, 32, lambda x, y, d=shape: 0.5 - d(x, y))
+    save("pointer", 32, lambda x, y: 0.5 - pointer(x, y))
 
 
 if __name__ == "__main__":

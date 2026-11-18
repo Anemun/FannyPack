@@ -40,6 +40,7 @@ local C = {
     white = { 1, 1, 1, 1 },
     sidebar = { 0.035, 0.037, 0.043, 1 },
     accentDim = { 0.37, 0.71, 0.56, 0.14 },
+    gold = { 0.94, 0.69, 0.24, 1 }, -- the logo's ring: the "new" dots
 }
 
 local window
@@ -390,6 +391,8 @@ local function CreateTextInput(parent, width, placeholderText)
     return box
 end
 
+ns.CreateButton = CreateButton -- also in the tour's bubbles
+
 -- A button that asks "Confirm?" on the first click and acts on the second.
 local function CreateConfirmButton(parent, label, width, style, onConfirm)
     local button = CreateButton(parent, label, width, style)
@@ -582,10 +585,75 @@ local function CreateBarCard(parent)
             button:SetScript("OnClick", ns.ResetPosition)
             return button
         end)
+    -- X and Y, typed in: where the first button is, from the player frame
+    -- while attached, otherwise from the middle of the screen.
+    local exactDesc = AddRow(card, L["Exact position"], "", function(p)
+        local holder = CreateFrame("Frame", nil, p)
+        holder:SetSize(2 * (18 + 64) + 12, 28)
+        local function Field(label, index, x)
+            local text = Text(holder, 13, C.muted)
+            text:SetPoint("LEFT", x, 0)
+            text:SetText(label)
+            local box = CreateTextInput(holder, 64, "")
+            box:SetPoint("LEFT", x + 18, 0)
+            box:SetJustifyH("CENTER")
+            box:SetTextInsets(4, 4, 0, 0)
+            local function Show()
+                local values = { ns.GetPosition() }
+                box:SetText(values[index] and tostring(values[index]) or "")
+            end
+            local function Apply(self)
+                local value = tonumber((self:GetText():gsub(",", ".")))
+                local x, y = ns.GetPosition()
+                if value and x then
+                    if index == 1 then x = value else y = value end
+                    ns.SetPosition(x, y)
+                end
+                Show() -- the value it ended up at, or the old one
+            end
+            box:SetScript("OnEnterPressed", function(self)
+                Apply(self)
+                self:ClearFocus()
+            end)
+            box:HookScript("OnEditFocusLost", function(self) Apply(self) end)
+            box:SetScript("OnEscapePressed", function(self)
+                Show()
+                self:ClearFocus()
+            end)
+            box:SetScript("OnTabPressed", function(self) self:ClearFocus() end)
+            updaters[#updaters + 1] = function() if not box:HasFocus() then Show() end end
+            Show()
+        end
+        Field("X", 1, 0)
+        Field("Y", 2, 18 + 64 + 12)
+        return holder
+    end)
+    local function DescribeExact()
+        local _, _, from = ns.GetPosition()
+        exactDesc:SetText(from == "player"
+            and L["The first button's corner, from the player frame's top left. Type a number and press Enter."]
+            or L["The first button's corner, from the middle of the screen (Y up). Type a number and press Enter."])
+    end
+    updaters[#updaters + 1] = DescribeExact
+    DescribeExact()
     AddRow(card, L["Minimap button"],
         L["Show a Fanny Pack button on the minimap. Click it to open this window, drag it to move it."],
         function(p)
             return CreateToggle(p, function() return ns.account.minimapButton end, ns.SetMinimapButton)
+        end)
+    AddRow(card, L["Tour"], L["A short tour of the bar, as on your first login."],
+        function(p)
+            local button = CreateButton(p, L["Show the tour"], 110)
+            button:SetScript("OnClick", function()
+                window:Hide() -- the tour points at the bar
+                ns.StartTour()
+            end)
+            return button
+        end)
+    AddRow(card, L["Tell me about new features"],
+        L["After an update with new features, one line in chat says what's new. This window shows it either way."],
+        function(p)
+            return CreateToggle(p, function() return ns.account.newsChat ~= false end, ns.SetNewsChat)
         end)
     LayoutCard(card)
     return card
@@ -599,8 +667,24 @@ local function CreateButtonsCard(parent)
 
     local intro = Text(card, 12, C.muted)
     intro:SetPoint("TOPLEFT", 20, -52)
-    intro:SetText(L["The top one is the bar's first button. Right-click a button on the bar to pick which item it uses and when its count turns red."])
+    intro:SetText(L["The top one is the bar's first button: drag a row to move its button. Right-click a button on the bar to pick which item it uses and when its count turns red."])
     local top -- where the list starts, under the intro; set by Relayout
+
+    -- Beside the intro: a key for any button, in the game's Key Bindings.
+    local KEYS_WIDTH = 110
+    local keys = CreateButton(card, L["Key Bindings"], KEYS_WIDTH)
+    keys:SetPoint("TOPRIGHT", -20, -48)
+    keys:SetScript("OnClick", function()
+        window:Hide() -- would cover the game's settings
+        ns.OpenKeyBindings()
+    end)
+    keys:SetScript("OnEnter", function(self)
+        GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+        GameTooltip:SetText(L["Hotkeys"], 1, 1, 1)
+        GameTooltip:AddLine(L["Bind a key to any button, under Fanny Pack."], 0.6, 0.6, 0.6, true)
+        GameTooltip:Show()
+    end)
+    keys:HookScript("OnLeave", GameTooltip_Hide)
 
     -- Headings over the two columns of switches, far enough apart for
     -- "Out of combat" to fit over its switch.
@@ -618,18 +702,90 @@ local function CreateButtonsCard(parent)
         if ns.IsAvailable(kind.key) then shown[#shown + 1] = kind end
     end
 
+    local ROW_HEIGHT, ROW_STEP = 28, 32
+    local dragged, dropAt -- the row being dragged, and the place it would land (1 = first)
+
+    -- The rows in bar order. While a row is dragged it's left out, and the
+    -- others leave a gap where it would land.
     local function Layout()
         local i = 0
         for _, key in ipairs(ns.Order()) do
             local row = rows[key]
-            if row then
+            if row and row ~= dragged then
                 i = i + 1
+                if dragged and i == dropAt then i = i + 1 end -- the gap
                 row:ClearAllPoints()
-                row:SetPoint("TOPLEFT", 20, top - (i - 1) * 36)
+                row:SetPoint("TOPLEFT", 20, top - (i - 1) * ROW_STEP)
                 row.up:SetEnabled(i > 1)
                 row.down:SetEnabled(i < #shown)
             end
         end
+    end
+
+    -- Dragging a row: it follows the mouse up and down, and the page scrolls
+    -- near its top and bottom edges.
+    local function CursorY()
+        local _, y = GetCursorPosition()
+        return y / card:GetEffectiveScale()
+    end
+
+    local function DragUpdate(row, elapsed)
+        local scroll = card:GetParent():GetParent()
+        local y = CursorY()
+        if scroll and scroll.GetVerticalScrollRange then
+            local range, current = scroll:GetVerticalScrollRange(), scroll:GetVerticalScroll()
+            local step = 600 * elapsed
+            if y > scroll:GetTop() - 30 and current > 0 then
+                scroll:SetVerticalScroll(math.max(0, current - step))
+            elseif y < scroll:GetBottom() + 30 and current < range then
+                scroll:SetVerticalScroll(math.min(range, current + step))
+            end
+            if scroll.UpdateScrollBar then scroll.UpdateScrollBar() end
+        end
+        -- The row's top, relative to the card, kept within the list.
+        local rowTop = y - card:GetTop() + row.grabOffset
+        rowTop = math.max(top - (#shown - 1) * ROW_STEP, math.min(top, rowTop))
+        row:ClearAllPoints()
+        row:SetPoint("TOPLEFT", 20, rowTop)
+        local at = math.floor((top - rowTop) / ROW_STEP + 0.5) + 1
+        if at ~= dropAt then
+            dropAt = at
+            Layout()
+        end
+    end
+
+    local function StartDrag(row)
+        dragged, dropAt = row, nil
+        row.grabOffset = row:GetTop() - CursorY()
+        row:SetFrameLevel(card:GetFrameLevel() + 20)
+        SetColor(row.bg, C.controlHover)
+        row:SetScript("OnUpdate", DragUpdate)
+    end
+
+    local function StopDrag(row)
+        if dragged ~= row then return end
+        row:SetScript("OnUpdate", nil)
+        row:SetFrameLevel(card:GetFrameLevel() + 1)
+        SetColor(row.bg, C.control)
+        if not dropAt then -- let go before it moved
+            dragged = nil
+            Layout()
+            return
+        end
+        -- Land before the row now at dropAt (counting without this one).
+        local before, i = nil, 0
+        for _, key in ipairs(ns.Order()) do
+            if rows[key] and rows[key] ~= row then
+                i = i + 1
+                if i == dropAt then
+                    before = key
+                    break
+                end
+            end
+        end
+        dragged, dropAt = nil, nil
+        ns.MoveButtonTo(row.key, before)
+        Layout()
     end
 
     local function Move(key, delta)
@@ -639,12 +795,26 @@ local function CreateButtonsCard(parent)
 
     for _, kind in ipairs(shown) do
         local row = CreateFrame("Frame", nil, card)
-        row:SetSize(rowWidth, 32)
-        Rounded(row, "BACKGROUND", C.control)
+        row:SetSize(rowWidth, ROW_HEIGHT)
+        row.key = kind.key
+        row.bg = Rounded(row, "BACKGROUND", C.control)
+        row:EnableMouse(true)
+        row:RegisterForDrag("LeftButton")
+        row:SetScript("OnDragStart", StartDrag)
+        row:SetScript("OnDragStop", StopDrag)
+        row:SetScript("OnHide", StopDrag) -- the window closed mid-drag
+
+        -- A grip of six dots on the left: the row can be dragged.
+        for dot = 0, 5 do
+            local texture = row:CreateTexture(nil, "ARTWORK")
+            texture:SetSize(2, 2)
+            texture:SetColorTexture(C.muted[1], C.muted[2], C.muted[3], 0.8)
+            texture:SetPoint("LEFT", 7 + (dot % 2) * 4, 4 - math.floor(dot / 2) * 4)
+        end
 
         local icon = row:CreateTexture(nil, "ARTWORK")
         icon:SetSize(22, 22)
-        icon:SetPoint("LEFT", 8, 0)
+        icon:SetPoint("LEFT", 24, 0) -- clear of the grip
         icon:SetTexture(ns.KindIcon(kind))
         icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
 
@@ -671,16 +841,28 @@ local function CreateButtonsCard(parent)
     end
     updaters[#updaters + 1] = Layout
 
-    -- Under the list: hotkeys, and when buttons hide.
-    AddRow(card, L["Hotkeys"], L["Bind a key to any button, under Fanny Pack."],
-        function(p)
-            local button = CreateButton(p, L["Key Bindings"], 110)
-            button:SetScript("OnClick", function()
-                window:Hide() -- would cover the game's settings
-                ns.OpenKeyBindings()
-            end)
-            return button
-        end)
+    -- Fits the card to a width; the intro's height decides where the list starts.
+    function card:Relayout(width)
+        self:SetWidth(width)
+        intro:SetWidth(width - 40 - KEYS_WIDTH - 16)
+        local headings = math.min(-52 - intro:GetStringHeight(), -48 - keys:GetHeight()) - 14
+        -- Centred over the switches: the right one ends 8 inside the row, which ends 20 inside the card.
+        shownHeading:ClearAllPoints()
+        shownHeading:SetPoint("TOP", self, "TOPRIGHT", -20 - 8 - 24, headings)
+        combatHeading:ClearAllPoints()
+        combatHeading:SetPoint("TOP", self, "TOPRIGHT", -20 - 8 - 48 - COLUMN_GAP - 24, headings)
+        top = headings - shownHeading:GetStringHeight() - 6
+        for _, row in pairs(rows) do row:SetWidth(width - 40) end
+        Layout()
+        self:SetHeight(-top + #shown * ROW_STEP - (ROW_STEP - ROW_HEIGHT) + 20)
+    end
+    card:Relayout(CARD_WIDTH)
+    return card
+end
+
+-- How items are used: on a target or you, and when buttons hide.
+local function CreateUsingItemsCard(parent)
+    local card = CreateCard(parent, L["Using items"], CARD_WIDTH)
     AddRow(card, L["Use on your target"],
         L["Bandages, cures and scrolls go on a friendly target. With no target, or an enemy targeted, they go on you."],
         function(p)
@@ -695,23 +877,7 @@ local function CreateButtonsCard(parent)
         function(p)
             return CreateToggle(p, function() return ns.db.campOutdoorsOnly end, ns.SetCampOutdoorsOnly)
         end)
-
-    -- Fits the card to a width; the intro's height decides where the list starts.
-    function card:Relayout(width)
-        self:SetWidth(width)
-        intro:SetWidth(width - 40)
-        local headings = -52 - intro:GetStringHeight() - 14
-        -- Centred over the switches: the right one ends 8 inside the row, which ends 20 inside the card.
-        shownHeading:ClearAllPoints()
-        shownHeading:SetPoint("TOP", self, "TOPRIGHT", -20 - 8 - 24, headings)
-        combatHeading:ClearAllPoints()
-        combatHeading:SetPoint("TOP", self, "TOPRIGHT", -20 - 8 - 48 - COLUMN_GAP - 24, headings)
-        top = headings - shownHeading:GetStringHeight() - 6
-        for _, row in pairs(rows) do row:SetWidth(width - 40) end
-        Layout()
-        LayoutCard(self, top - #shown * 36 - 14)
-    end
-    card:Relayout(CARD_WIDTH)
+    LayoutCard(card)
     return card
 end
 
@@ -826,6 +992,46 @@ local function CreateHiddenCard(parent)
         self:SetHeight(-top + listHeight + 20)
     end
     Fill()
+    card:Relayout(CARD_WIDTH)
+    return card
+end
+
+-- How the reminder glow looks, with a live preview: a gold sample
+-- (missing) and a silver one (running out).
+local function CreateGlowLookCard(parent)
+    local card = CreateCard(parent, L["Glow look"], CARD_WIDTH)
+    local preview = ns.CreateGlowPreview(card)
+    preview:SetPoint("TOPRIGHT", -20, -14)
+    updaters[#updaters + 1] = function() preview:Refresh() end
+
+    AddRow(card, L["Style"],
+        L["Soft: a halo around the button. Border: a frame tight around it, easy to see on any ground. Sparkle: the action bars' proc glow."],
+        function(p)
+            return CreateSegmented(p, {
+                { value = "soft", label = L["Soft"] },
+                { value = "border", label = L["Border"] },
+                { value = "both", label = L["Both"] },
+                { value = "proc", label = L["Sparkle"] },
+            }, function() return ns.db.glowStyle end, ns.SetGlowStyle, 64)
+        end, true)
+    AddRow(card, L["Strength"], L["How strongly the glow shows, in percent."],
+        function(p)
+            return CreateSlider(p, 50, 200, function() return ns.db.glowStrength end, ns.SetGlowStrength, 140)
+        end)
+    local pulseToggle
+    AddRow(card, L["Pulse"], L["The glow slowly fades in and out. Off: it stays lit. The sparkle has its own movement."],
+        function(p)
+            pulseToggle = CreateToggle(p, function() return ns.db.glowPulse end, ns.SetGlowPulse)
+            return pulseToggle
+        end)
+    updaters[#updaters + 1] = function() pulseToggle:SetAlpha(ns.db.glowStyle == "proc" and 0.4 or 1) end
+
+    -- The rows start under the preview, which sits beside the title.
+    function card:Relayout(width)
+        self:SetWidth(width)
+        LayoutCard(self, math.min(-56, -14 - preview:GetHeight() - 10))
+    end
+    preview:Refresh()
     card:Relayout(CARD_WIDTH)
     return card
 end
@@ -1321,20 +1527,23 @@ end
 
 -- The sidebar's pages and the cards on each.
 local PAGES = {
-    { key = "buttons", title = L["Buttons"], subtitle = L["Order, hotkeys & hiding"], icon = "icon-list",
-        cards = { CreateButtonsCard, CreateHiddenCard } },
+    { key = "buttons", title = L["Buttons"], subtitle = L["Order, combat & hotkeys"], icon = "icon-list",
+        cards = { CreateButtonsCard } },
+    { key = "items", title = L["Items"], subtitle = L["Hiding & using items"], icon = "icon-items",
+        cards = { CreateUsingItemsCard, CreateHiddenCard } },
     { key = "bar", title = L["Bar"], subtitle = L["Position & layout"], icon = "icon-sort",
         cards = { CreateBarCard } },
     { key = "look", title = L["Look"], subtitle = L["Shape, size & fading"], icon = "icon-look",
         cards = { CreateLookCard } },
     { key = "reminders", title = L["Reminders"], subtitle = L["Glows & low stock"], icon = "icon-clock",
-        cards = { CreateRemindersCard, CreateLowStockCard } },
+        cards = { CreateGlowLookCard, CreateRemindersCard, CreateLowStockCard } },
     { key = "profiles", title = L["Profiles"], subtitle = L["Setups for roles & characters"], icon = "icon-profile",
         cards = { CreateProfilesCard } },
 }
 
 local pages = {} -- [key] = { frame, scroll, content, cards, nav }
 local currentPage = "buttons"
+local newsCard -- "What's new", on top of whichever page is open (see CreateNewsCard)
 
 -- Fits a page's cards to the window's width and stacks them. Returns the
 -- height of all the cards.
@@ -1342,6 +1551,18 @@ local function LayoutPage(key)
     local page = pages[key]
     local width = window:GetWidth() - SIDEBAR_WIDTH - 1 - SCROLLBAR - 40
     local y = -20
+    if newsCard then
+        local news = ns.UnseenNews()
+        newsCard:SetShown(#news > 0)
+        if #news > 0 then
+            newsCard:SetParent(page.content)
+            newsCard:Fill(news)
+            newsCard:Relayout(width)
+            newsCard:ClearAllPoints()
+            newsCard:SetPoint("TOPLEFT", page.content, "TOPLEFT", 20, y)
+            y = y - newsCard:GetHeight() - 16
+        end
+    end
     for _, card in ipairs(page.cards) do
         if card.Relayout then
             card:Relayout(width)
@@ -1360,6 +1581,7 @@ end
 
 local function SelectPage(key)
     currentPage = key
+    ns.MarkPageSeen(key)
     for pageKey, page in pairs(pages) do
         local selected = pageKey == key
         page.frame:SetShown(selected)
@@ -1368,6 +1590,7 @@ local function SelectPage(key)
         SetColor(page.nav.icon, selected and C.accent or C.muted)
         local color = selected and C.accent or C.text
         page.nav.title:SetTextColor(color[1], color[2], color[3])
+        page.nav.newDot:SetShown(ns.PageIsNew(pageKey))
     end
     LayoutPage(key)
 end
@@ -1392,6 +1615,10 @@ local function CreateNavButton(parent, page, y)
 
     nav.title = Text(nav, 15, C.text)
     nav.title:SetText(page.title)
+    -- A gold dot while the page has news you haven't looked at.
+    nav.newDot = Icon(nav, "circle", 7, C.gold)
+    nav.newDot:SetPoint("LEFT", nav.title, "RIGHT", 6, 0)
+    nav.newDot:Hide()
     local subtitle = Text(nav, 11, C.muted)
     subtitle:SetPoint("TOPLEFT", nav.title, "BOTTOMLEFT", 0, -4)
     subtitle:SetWidth(SIDEBAR_WIDTH - 20 - 56)
@@ -1411,6 +1638,95 @@ local function CreateNavButton(parent, page, y)
         SelectPage(page.key)
     end)
     return nav
+end
+
+-- "What's new" after an update: each release's points newest first, each
+-- with a "Show me" link to its page, and "Got it" to put the card away
+-- until the next release with news (ns.WHATS_NEW, in News.lua).
+-- A small gold dot (the font has no bullet character), as Pocket Goblin's.
+local BULLET = "|T" .. MEDIA .. "circle:7:7:0:0:32:32:0:32:0:32:240:176:61|t  "
+
+local function CreateNewsCard(parent)
+    local card = CreateCard(parent, L["What's new"], CARD_WIDTH)
+    local headings, points = {}, {}
+    local shownHeadings, shownPoints = 0, 0
+
+    local gotIt = CreateButton(card, L["Got it"], 90, "primary")
+    gotIt:SetScript("OnClick", function()
+        ns.DismissNews()
+        LayoutPage(currentPage)
+    end)
+
+    local function Heading(i)
+        if not headings[i] then headings[i] = Text(card, 12, C.gold) end
+        return headings[i]
+    end
+
+    local function Point(i)
+        if points[i] then return points[i] end
+        local point = {}
+        point.text = Text(card, 13, C.text)
+        point.link = CreateFrame("Button", nil, card)
+        point.link.label = Text(point.link, 12, C.accent)
+        point.link.label:SetPoint("RIGHT")
+        point.link.label:SetText(L["Show me"])
+        point.link:SetSize(point.link.label:GetStringWidth() + 4, 18)
+        point.link:SetScript("OnEnter", function(self) self.label:SetTextColor(C.accentHover[1], C.accentHover[2], C.accentHover[3]) end)
+        point.link:SetScript("OnLeave", function(self) self.label:SetTextColor(C.accent[1], C.accent[2], C.accent[3]) end)
+        point.link:SetScript("OnClick", function(self)
+            if self.page and pages[self.page] then SelectPage(self.page) end
+        end)
+        points[i] = point
+        return point
+    end
+
+    -- Puts the entries' text in place; Relayout positions it.
+    function card:Fill(news)
+        shownHeadings, shownPoints = 0, 0
+        self.order = {}
+        for _, entry in ipairs(news) do
+            shownHeadings = shownHeadings + 1
+            local heading = Heading(shownHeadings)
+            heading:SetText(L["Version %s"]:format(entry.version))
+            self.order[#self.order + 1] = heading
+            for _, info in ipairs(entry.points) do
+                shownPoints = shownPoints + 1
+                local point = Point(shownPoints)
+                point.text:SetText(BULLET .. info.text)
+                point.link.page = info.page
+                point.link:SetShown(info.page ~= nil)
+                self.order[#self.order + 1] = point
+            end
+        end
+        for i, heading in ipairs(headings) do heading:SetShown(i <= shownHeadings) end
+        for i, point in ipairs(points) do
+            point.text:SetShown(i <= shownPoints)
+            if i > shownPoints then point.link:Hide() end
+        end
+    end
+
+    function card:Relayout(width)
+        self:SetWidth(width)
+        local y = -52
+        for _, item in ipairs(self.order or {}) do
+            if item.text then -- a point, with its link on the right
+                item.text:SetWidth(width - 40 - 90)
+                item.text:ClearAllPoints()
+                item.text:SetPoint("TOPLEFT", 28, y)
+                item.link:ClearAllPoints()
+                item.link:SetPoint("TOPRIGHT", self, "TOPRIGHT", -20, y + 2)
+                y = y - item.text:GetStringHeight() - 8
+            else -- a version heading
+                item:ClearAllPoints()
+                item:SetPoint("TOPLEFT", 20, y)
+                y = y - item:GetStringHeight() - 8
+            end
+        end
+        gotIt:ClearAllPoints()
+        gotIt:SetPoint("TOPRIGHT", self, "TOPRIGHT", -20, y - 4)
+        self:SetHeight(-y + 4 + gotIt:GetHeight() + 20)
+    end
+    return card
 end
 
 local function CreateWindow()
@@ -1471,6 +1787,8 @@ local function CreateWindow()
     sidebarLine:SetPoint("BOTTOMRIGHT")
 
     -- Each page: its own scrolling column of cards, right of the sidebar.
+    newsCard = CreateNewsCard(window)
+    newsCard:Hide()
     local tallest, navY = 0, -8
     for _, info in ipairs(PAGES) do
         local frame = CreateFrame("Frame", nil, window)
@@ -1502,7 +1820,7 @@ local function CreateWindow()
         if not InCombatLockdown() then self:SetPropagateKeyboardInput(true) end
         FitToScreen() -- the screen or UI scale may have changed
         ns.RefreshWindow()
-        LayoutPage(currentPage)
+        SelectPage(currentPage) -- lays it out, and marks it seen
     end)
 end
 
