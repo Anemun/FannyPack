@@ -670,18 +670,19 @@ local function CreateButtonsCard(parent)
     intro:SetText(L["The top one is the bar's first button: drag a row to move its button. Right-click a button on the bar to pick which item it uses and when its count turns red."])
     local top -- where the list starts, under the intro; set by Relayout
 
-    -- Beside the intro: a key for any button, in the game's Key Bindings.
+    -- Beside the intro: binding keys by hovering the buttons on the bar.
     local KEYS_WIDTH = 110
-    local keys = CreateButton(card, L["Key Bindings"], KEYS_WIDTH)
+    local keys = CreateButton(card, L["Bind keys"], KEYS_WIDTH)
     keys:SetPoint("TOPRIGHT", -20, -48)
     keys:SetScript("OnClick", function()
-        window:Hide() -- would cover the game's settings
-        ns.OpenKeyBindings()
+        window:Hide() -- you hover the bar's buttons
+        ns.StartKeyBinding()
     end)
     keys:SetScript("OnEnter", function(self)
         GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
         GameTooltip:SetText(L["Hotkeys"], 1, 1, 1)
-        GameTooltip:AddLine(L["Bind a key to any button, under Fanny Pack."], 0.6, 0.6, 0.6, true)
+        GameTooltip:AddLine(L["Hover a button on the bar and press a key to bind it. Also /fannypack bind."],
+            0.6, 0.6, 0.6, true)
         GameTooltip:Show()
     end)
     keys:HookScript("OnLeave", GameTooltip_Hide)
@@ -856,6 +857,98 @@ local function CreateButtonsCard(parent)
         Layout()
         self:SetHeight(-top + #shown * ROW_STEP - (ROW_STEP - ROW_HEIGHT) + 20)
     end
+    card:Relayout(CARD_WIDTH)
+    return card
+end
+
+-- Macros for your own action bars (Macros.lua): one row per macro you
+-- keep, which you drag onto a bar, and a menu to add one.
+local function CreateMacrosCard(parent)
+    local card = CreateCard(parent, L["Macros"], CARD_WIDTH)
+    local intro = Text(card, 12, C.muted)
+    intro:SetPoint("TOPLEFT", 20, -52)
+    intro:SetText(L["Fanny Pack keeps a macro for each button you add here, always using the item that button would use. Drag a macro onto any action bar. They're this character's macros."])
+
+    local add = CreateDropdown(card, 170, function() return L["Add a macro"] end, function(root)
+        for _, kind in ipairs(ns.KINDS) do
+            if ns.IsAvailable(kind.key) and not kind.flyout and not ns.charDB.macros[kind.key] then
+                root:CreateButton(kind.name, function() ns.SetMacro(kind.key, true) end)
+            end
+        end
+    end)
+
+    local rows, shown = {}, 0
+    local function Row(i)
+        if rows[i] then return rows[i] end
+        local row = CreateFrame("Button", nil, card)
+        row:SetHeight(28)
+        row.bg = Rounded(row, "BACKGROUND", C.control)
+        row.icon = row:CreateTexture(nil, "ARTWORK")
+        row.icon:SetSize(20, 20)
+        row.icon:SetPoint("LEFT", 8, 0)
+        row.icon:SetTexCoord(0.08, 0.92, 0.08, 0.92)
+        row.name = Text(row, 13, C.text)
+        row.name:SetPoint("LEFT", row.icon, "RIGHT", 10, 0)
+        row.remove = CreateFrame("Button", nil, row)
+        row.remove:SetSize(24, 24)
+        row.remove:SetPoint("RIGHT", -4, 0)
+        local x = Icon(row.remove, "icon-close", 10, C.muted)
+        x:SetPoint("CENTER")
+        row.remove:SetScript("OnEnter", function(self)
+            SetColor(x, C.text)
+            GameTooltip:SetOwner(self, "ANCHOR_RIGHT")
+            GameTooltip:SetText(L["Remove the macro"], 1, 1, 1)
+            GameTooltip:Show()
+        end)
+        row.remove:SetScript("OnLeave", function() SetColor(x, C.muted); GameTooltip:Hide() end)
+        row.remove:SetScript("OnClick", function() ns.SetMacro(row.key, false) end)
+        row.hint = Text(row, 12, C.muted)
+        row.hint:SetPoint("RIGHT", row.remove, "LEFT", -8, 0)
+        row.hint:SetText(L["drag to a bar"])
+        row.name:SetPoint("RIGHT", row.hint, "LEFT", -8, 0)
+        row.name:SetWordWrap(false)
+        -- Dragging (or clicking) the row puts the macro on the cursor.
+        row:RegisterForDrag("LeftButton")
+        row:SetScript("OnDragStart", function(self) ns.PickupMacro(self.key) end)
+        row:SetScript("OnClick", function(self) ns.PickupMacro(self.key) end)
+        row:SetScript("OnEnter", function(self) SetColor(self.bg, C.controlHover) end)
+        row:SetScript("OnLeave", function(self) SetColor(self.bg, C.control) end)
+        rows[i] = row
+        return row
+    end
+
+    local function Fill()
+        shown = 0
+        for _, kind in ipairs(ns.KINDS) do
+            if ns.charDB.macros[kind.key] then
+                shown = shown + 1
+                local row = Row(shown)
+                row.key = kind.key
+                local entry = ns.ItemFor(kind.key)
+                row.icon:SetTexture(entry and entry.icon or ns.KindIcon(kind))
+                row.name:SetText(ns.MacroName(kind.key) .. "  |cff8a8b93" .. (entry and entry.name or L["none in your bags"]) .. "|r")
+                row:Show()
+            end
+        end
+        for i = shown + 1, #rows do rows[i]:Hide() end
+    end
+    updaters[#updaters + 1] = Fill
+
+    function card:Relayout(width)
+        self:SetWidth(width)
+        intro:SetWidth(width - 40)
+        local y = -52 - intro:GetStringHeight() - 14
+        for i = 1, shown do
+            rows[i]:SetWidth(width - 40)
+            rows[i]:ClearAllPoints()
+            rows[i]:SetPoint("TOPLEFT", 20, y)
+            y = y - 32
+        end
+        add:ClearAllPoints()
+        add:SetPoint("TOPLEFT", 20, y - (shown > 0 and 6 or 0))
+        self:SetHeight(-y + (shown > 0 and 6 or 0) + 28 + 20)
+    end
+    Fill()
     card:Relayout(CARD_WIDTH)
     return card
 end
@@ -1286,16 +1379,24 @@ local function CreateProfilesCard(parent)
             box:SetPoint("LEFT")
             local create = CreateButton(holder, L["Create"], 78, "primary")
             create:SetPoint("RIGHT")
+            -- A name that can't be used: said in red under the field, and
+            -- gone again when you type.
+            local problem = Text(p, 12, C.danger)
+            problem:SetPoint("TOPLEFT", holder, "BOTTOMLEFT", 2, -4)
+            problem:SetText(L["Enter a name that isn't already used by a profile."])
+            problem:Hide()
             local function submit()
                 if ns.CreateProfile(box:GetText()) then
                     box:SetText("")
                     box:ClearFocus()
+                    problem:Hide()
                 else
-                    ns.Print(L["Enter a name that isn't already used by a profile."])
+                    problem:Show()
                 end
             end
             create:SetScript("OnClick", submit)
             box:SetScript("OnEnterPressed", submit)
+            box:HookScript("OnTextChanged", function(_, userInput) if userInput then problem:Hide() end end)
             return holder
         end, true)
     AddRow(card, L["Copy from"], L["Replace the active profile's settings with a copy of another profile."],
@@ -1529,8 +1630,8 @@ end
 local PAGES = {
     { key = "buttons", title = L["Buttons"], subtitle = L["Order, combat & hotkeys"], icon = "icon-list",
         cards = { CreateButtonsCard } },
-    { key = "items", title = L["Items"], subtitle = L["Hiding & using items"], icon = "icon-items",
-        cards = { CreateUsingItemsCard, CreateHiddenCard } },
+    { key = "items", title = L["Items"], subtitle = L["Hiding, macros & using items"], icon = "icon-items",
+        cards = { CreateUsingItemsCard, CreateMacrosCard, CreateHiddenCard } },
     { key = "bar", title = L["Bar"], subtitle = L["Position & layout"], icon = "icon-sort",
         cards = { CreateBarCard } },
     { key = "look", title = L["Look"], subtitle = L["Shape, size & fading"], icon = "icon-look",

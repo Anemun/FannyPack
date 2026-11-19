@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.7.0
+
+New:
+- **Macros for your own action bars**, like the Buffet addon: on the Items page, add a macro for any button (Food, Drink, Bandages, a potion...). Fanny Pack keeps it up to date with the item that button would use, so you can drag it onto Bartender, Dominos or the game's bars and still get the best item. The macros are per character, named "FP" and the button's name, and change out of combat (the game doesn't allow it in a fight)
+- **Bind keys by hovering**, like Bartender's /kb: click **Bind keys** on the Buttons page (or type `/fannypack bind`), hover a button on the bar and press a key, with Shift, Ctrl or Alt if you like. The middle mouse button, the side buttons and the mouse wheel work too. Escape over a button clears its key. If the key did something else before, chat says what it was
+
+Changed:
+- **Less in chat**: "not in combat" messages (moving the bar, key bindings, macros, a button switching items after the fight) now show in the game's error text at the top of the screen, like its own "you can't do that now" messages. Switching, copying, resetting and deleting profiles in the options no longer repeats itself in chat (`/fannypack profile` still answers there), and a profile name that's already taken is pointed out under the name field
+
 ## 1.6.0
 
 New:

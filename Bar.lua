@@ -395,7 +395,7 @@ end
 -- combat. Returns true if it moved.
 function ns.SetPosition(x, y)
     if InCombatLockdown() then
-        ns.Print(L["You can't move the bar in combat."])
+        ns.Refuse(L["You can't move the bar in combat."])
         return false
     end
     if not bar then return false end
@@ -411,7 +411,7 @@ end
 
 function ns.ResetPosition()
     if InCombatLockdown() then
-        ns.Print(L["You can't move the bar in combat."])
+        ns.Refuse(L["You can't move the bar in combat."])
         return false
     end
     ns.db.position = nil
@@ -427,7 +427,7 @@ end
 -- stays where it is; only what it's attached to changes.
 function ns.SetAttached(attached)
     if InCombatLockdown() then
-        ns.Print(L["You can't move the bar in combat."])
+        ns.Refuse(L["You can't move the bar in combat."])
         return false
     end
     ns.db.attached = attached and true or false
@@ -994,14 +994,17 @@ local KEY_ABBREVIATIONS = {
 }
 
 -- The key bound to a button (Bindings.xml), shown in its top right corner.
+-- A key as the action bars show it: SHIFT-1 becomes S1.
+function ns.ShortKey(key)
+    for _, abbreviation in ipairs(KEY_ABBREVIATIONS) do
+        key = key:gsub(abbreviation[1], abbreviation[2])
+    end
+    return key
+end
+
 local function UpdateHotkey(button)
     local key = GetBindingKey("CLICK " .. button:GetName() .. ":LeftButton")
-    if key then
-        for _, abbreviation in ipairs(KEY_ABBREVIATIONS) do
-            key = key:gsub(abbreviation[1], abbreviation[2])
-        end
-    end
-    button.hotkey:SetText(key or "")
+    button.hotkey:SetText(key and ns.ShortKey(key) or "")
 end
 
 -- Fade out of combat: how visible the bar is now, from 0 to 1. The fader
@@ -1367,6 +1370,7 @@ local function FadeTarget()
     if InCombatLockdown() or not ns.account.locked then return 1 end
     if bar:IsMouseOver(8, -8, -8, 8) then return 1 end
     if (picker and picker:IsShown()) or (flyout and flyout:IsShown()) or (ns.TourShowing and ns.TourShowing())
+        or (ns.KeyBindingShowing and ns.KeyBindingShowing())
         or (FannyPackFrame and FannyPackFrame:IsShown()) then
         return 1
     end
@@ -1521,6 +1525,16 @@ function ns.BarFrame()
     return bar
 end
 
+-- The buttons on the bar now, in bar order (for hover key binding).
+function ns.ShownButtons()
+    local list = {}
+    for _, key in ipairs(ns.Order()) do
+        local button = buttons[key]
+        if button and button:IsShown() then list[#list + 1] = button end
+    end
+    return list
+end
+
 function ns.FirstShownButton()
     for _, key in ipairs(ns.Order()) do
         local button = buttons[key]
@@ -1545,6 +1559,11 @@ function ns.UpdateBar()
         UpdateHotkey(button)
     end
     if picker and picker:IsShown() then ns.RefreshPicker() end
+    if not InCombatLockdown() then
+        if ns.UpdateMacros then ns.UpdateMacros() end
+        -- Binding keys: the overlays follow the buttons.
+        if ns.KeyBindingShowing and ns.KeyBindingShowing() then ns.StartKeyBinding() end
+    end
     if flyout and flyout:IsShown() then
         -- Its button may have just gone, say on walking into an inn.
         if flyout.owner:IsShown() then RefreshFlyout() elseif not InCombatLockdown() then flyout:Hide() end
@@ -1574,7 +1593,7 @@ local function CreateMover()
     mover:RegisterForDrag("LeftButton")
     mover:SetScript("OnDragStart", function()
         if InCombatLockdown() then
-            ns.Print(L["You can't move the bar in combat."])
+            ns.Refuse(L["You can't move the bar in combat."])
             return
         end
         GameTooltip:Hide()

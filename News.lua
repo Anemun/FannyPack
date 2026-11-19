@@ -11,6 +11,16 @@ local L = ns.L
 -- new; points: the card's lines, each with the options page it's on.
 ns.WHATS_NEW = {
     {
+        version = "1.7.0",
+        chat = L["macros for your own action bars, and binding keys by hovering the buttons"],
+        points = {
+            { text = L["Macros: put a Fanny Pack button on any action bar as a macro that always uses the best item."],
+                page = "items" },
+            { text = L["Bind keys: hover a button on the bar and press a key. Find it on the Buttons page, or type /fannypack bind."],
+                page = "buttons" },
+        },
+    },
+    {
         version = "1.6.0",
         chat = L["new glow looks, drag and drop to sort your buttons, and an Items page"],
         points = {

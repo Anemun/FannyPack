@@ -241,6 +241,17 @@ local function Print(msg, ...)
 end
 ns.Print = Print
 
+-- "Not now" messages, like the game's own: in the error text at the top of
+-- the screen (red), where they're seen at the moment, instead of in chat.
+-- notice: yellow, for "it happens later" rather than "it can't happen".
+function ns.Refuse(msg, notice)
+    if UIErrorsFrame then
+        UIErrorsFrame:AddMessage(msg, 1, notice and 0.82 or 0.1, notice and 0 or 0.1)
+    else
+        Print(msg)
+    end
+end
+
 ------------------------------------------------------------------------
 -- Recognising items
 ------------------------------------------------------------------------
@@ -775,7 +786,7 @@ ns.QueueScan = QueueScan
 function ns.SetChoice(key, itemID)
     charDB.chosen[key] = itemID
     if InCombatLockdown() then
-        Print(L["The button will switch to it when combat ends."])
+        ns.Refuse(L["The button will switch to it when combat ends."], true)
     end
     ns.UpdateBar()
 end
@@ -974,7 +985,7 @@ end
 -- Opens the game's Key Bindings, where Fanny Pack has its own section.
 function ns.OpenKeyBindings()
     if InCombatLockdown() then
-        Print(L["You can't change key bindings in combat."])
+        ns.Refuse(L["You can't change key bindings in combat."])
         return
     end
     if Settings and Settings.OpenToCategory and Settings.KEYBINDINGS_CATEGORY_ID then
@@ -1134,6 +1145,7 @@ local function ShowHelp()
     print(L["  /fannypack profile [name] - show or switch this character's profile"])
     print(L["  /fannypack minimap - show or hide the minimap button"])
     print(L["  /fannypack tour - a short tour of the bar"])
+    print(L["  /fannypack bind - bind keys by hovering the buttons"])
     print(L["  /fannypack debug - a report to copy into bug reports: your items and their buttons"])
 end
 
@@ -1152,6 +1164,8 @@ SlashCmdList.FANNYPACK = function(msg)
         if ns.ResetPosition() then
             Print(L["The bar is back above your player frame."])
         end
+    elseif command == "bind" or command == "kb" then
+        ns.StartKeyBinding()
     elseif command == "tour" then
         ns.StartTour()
     elseif command == "debug" then
@@ -1160,7 +1174,7 @@ SlashCmdList.FANNYPACK = function(msg)
         if rest == "" then
             Print(L["Profile: %s. Profiles: %s"], ns.GetProfileName(), table.concat(ns.GetProfileNames(), ", "))
         elseif account.profiles[rest] then
-            ns.SetProfile(rest)
+            ns.SetProfile(rest, true)
         else
             Print(L["No profile called %s. Create one in the options (/fannypack)."], rest)
         end
@@ -1272,6 +1286,7 @@ local function LoadSettings()
     end
 
     charDB.chosen = charDB.chosen or {}
+    charDB.macros = charDB.macros or {} -- [button key] = true: keep a macro for it (Macros.lua)
     characterKey = UnitName("player") .. " - " .. GetRealmName()
     LoadProfile(account.profileKeys[characterKey] or DEFAULT_PROFILE)
     ns.account, ns.charDB = account, charDB
@@ -1285,7 +1300,7 @@ end
 -- can't change in combat, so they follow when it ends.
 local function ProfileChanged()
     if InCombatLockdown() then
-        Print(L["The bar will change when combat ends."])
+        ns.Refuse(L["The bar will change when combat ends."], true)
     end
     ns.UpdateBar()
     if ns.RefreshWindow then ns.RefreshWindow() end
@@ -1313,10 +1328,12 @@ function ns.GetProfileUsers(name)
     return users
 end
 
-function ns.SetProfile(name)
+-- announce: say so in chat (for /fannypack profile; the options window
+-- shows it itself).
+function ns.SetProfile(name, announce)
     if not account.profiles[name] or name == ns.GetProfileName() then return end
     LoadProfile(name)
-    Print(L["Using profile %s."], name)
+    if announce then Print(L["Using profile %s."], name) end
     ProfileChanged()
 end
 
@@ -1337,14 +1354,12 @@ function ns.CopyProfile(source)
     wipe(db)
     for key, value in pairs(DeepCopy(from)) do db[key] = value end
     FillProfile(db) -- the source may not have been loaded since an update
-    Print(L["Copied profile %s into %s."], source, ns.GetProfileName())
     ProfileChanged()
 end
 
 function ns.ResetProfile()
     wipe(db)
     FillProfile(db)
-    Print(L["Profile %s was reset."], ns.GetProfileName())
     ProfileChanged()
 end
 
@@ -1356,7 +1371,6 @@ function ns.DeleteProfile(name)
     for key, profileName in pairs(account.profileKeys) do
         if profileName == name then account.profileKeys[key] = DEFAULT_PROFILE end
     end
-    Print(L["Deleted profile %s."], name)
     if ns.RefreshWindow then ns.RefreshWindow() end
 end
 

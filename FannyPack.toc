@@ -21,3 +21,5 @@ UI.lua
 Bar.lua
 Minimap.lua
 Tour.lua
+Macros.lua
+KeyBind.lua

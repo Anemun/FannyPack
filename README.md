@@ -91,6 +91,11 @@ you run low (5 bandages, 3 potions and so on, by default). All the low-stock
 limits are also listed together on the options' Reminders page, where you
 can turn the warning off altogether.
 
+**Macros for your own action bars**: on the options' Items page, add a macro
+for any button. Fanny Pack keeps it using the item that button would use, so
+you can drag it onto Bartender, Dominos or the game's bars and still get the
+best food, potion or bandage.
+
 **Hide items** you don't want on any button, like a flask you're saving
 for a raid: click the small **x** next to it in a button's right-click
 list. No button uses it from then on. Hidden items are listed under
@@ -102,9 +107,10 @@ Warriors and rogues don't get the drink and mana potion buttons by default.
 
 ## In combat
 
-- Every button works in combat, and so do their **hotkeys**: bind a key to
-  any button in the game's Key Bindings, under Fanny Pack. The key shows in
-  the button's corner
+- Every button works in combat, and so do their **hotkeys**: click **Bind
+  keys** on the Buttons page (or type `/fannypack bind`), hover a button and
+  press a key. The key shows in the button's corner. They're also in the
+  game's Key Bindings, under Fanny Pack
 - **Choose which buttons show in and out of combat.** Food, drink and buff
   food hide during a fight by default, since you can't eat or drink then; a
   button can also show only in fights. The bar closes up around whatever is
@@ -173,6 +179,7 @@ it again.
 | `/fannypack profile [name]` | Show or switch this character's profile |
 | `/fannypack minimap` | Show or hide the minimap button |
 | `/fannypack tour` | A short tour of the bar |
+| `/fannypack bind` | Bind keys by hovering the buttons |
 | `/fannypack debug` | A report to copy into bug reports: the items in your bags and which button each one is on |
 
 ## Reporting bugs
